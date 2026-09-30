@@ -54,6 +54,8 @@ async def lifespan(app: FastAPI):
     from app.edge.runtime import EdgeRuntime
     edge_runtime = EdgeRuntime()
     app.state.edge_runtime = edge_runtime
+    from app.edge.registry import set_edge_runtime
+    set_edge_runtime(edge_runtime)
 
     neo4j_client = None
     await edge_runtime.start()
@@ -83,6 +85,7 @@ async def lifespan(app: FastAPI):
                 await edge_runtime.close()
             finally:
                 app.state.edge_runtime = None
+                set_edge_runtime(None)
                 logger.info("app.shutdown")
 
 

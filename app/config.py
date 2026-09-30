@@ -41,6 +41,9 @@ class Settings(BaseSettings):
         default=None, alias="OLLAMA_CLOUD_API_KEY"
     )
 
+    # Cloud LLM is explicit opt-in only; the required offline path is local Ollama.
+    llm_use_cloud: bool = Field(default=False, alias="LLM_USE_CLOUD")
+
     # Embedding Model
     embedding_model: str = Field(default="nomic-embed-text", alias="EMBEDDING_MODEL")
 

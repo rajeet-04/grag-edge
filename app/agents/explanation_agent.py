@@ -166,7 +166,7 @@ def _build_llm():
     """Use lightweight cloud client path for explanation generation.
 
     Returning None here forces explanation_agent_node to use the project's
-    async OllamaClient(use_cloud=True), which is more memory efficient in
+    async OllamaClient (local by default), which is more memory efficient in
     constrained Docker environments.
     """
     return None
@@ -391,20 +391,24 @@ async def stream_explanation(state: dict[str, Any]):
         {"role": "user", "content": user_msg},
     ]
 
-    try:
-        client = OllamaClient(use_cloud=True)
-        async for chunk in client.chat_stream(messages=messages, temperature=0.3, max_tokens=4096):
-            yield chunk
-    except Exception as cloud_err:
-        logger.warning("stream_explanation.cloud_failed", error=str(cloud_err))
-        # Fall back to local
+    from app.config import get_settings
+
+    if get_settings().llm_use_cloud:
+        # Explicit opt-in cloud mode; falls back to local on failure.
         try:
-            local_client = OllamaClient(use_cloud=False)
-            async for chunk in local_client.chat_stream(messages=messages, temperature=0.3, max_tokens=2048):
+            client = OllamaClient(use_cloud=True)
+            async for chunk in client.chat_stream(messages=messages, temperature=0.3, max_tokens=4096):
                 yield chunk
-        except Exception as local_err:
-            logger.error("stream_explanation.local_failed", error=str(local_err))
-            yield "\n\n[Error generating response. Please try again.]"
+            return
+        except Exception as cloud_err:
+            logger.warning("stream_explanation.cloud_failed", error=str(cloud_err))
+    try:
+        local_client = OllamaClient(use_cloud=False)
+        async for chunk in local_client.chat_stream(messages=messages, temperature=0.3, max_tokens=2048):
+            yield chunk
+    except Exception as local_err:
+        logger.error("stream_explanation.local_failed", error=str(local_err))
+        yield "\n\n[Error generating response. Please try again.]"
 
 
 # ---------------------------------------------------------------------------
@@ -474,38 +478,28 @@ async def explanation_agent_node(state: dict[str, Any]) -> dict[str, Any]:
     else:
         from app.llm.ollama_client import OllamaClient
 
-        # Try cloud first, fall back to local if cloud fails
+        from app.config import get_settings
+
         raw_text = ""
-        try:
-            logger.info("explanation_agent.using", backend="ollama_client_cloud")
-            cloud_client = OllamaClient(use_cloud=True)
-            result = await cloud_client.chat(
-                messages=[
-                    {"role": "system", "content": EXPLANATION_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_msg},
-                ],
-                temperature=0.3,
-                max_tokens=4096,
+        messages = [
+            {"role": "system", "content": EXPLANATION_SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg},
+        ]
+        if get_settings().llm_use_cloud:
+            # Explicit opt-in cloud mode; local remains the fallback.
+            try:
+                result = await OllamaClient(use_cloud=True).chat(
+                    messages=messages, temperature=0.3, max_tokens=4096
+                )
+                raw_text = result.get("content", "")
+            except Exception as cloud_err:
+                logger.warning("explanation_agent.cloud_failed_using_local", error=str(cloud_err))
+        if not raw_text:
+            result = await OllamaClient(use_cloud=False).chat(
+                messages=messages, temperature=0.3, max_tokens=2048
             )
             raw_text = result.get("content", "")
-            logger.info("explanation_agent.cloud_success", content_length=len(raw_text))
-        except Exception as cloud_err:
-            logger.warning(
-                "explanation_agent.cloud_failed_using_local",
-                error=str(cloud_err),
-            )
-            # Fall back to local Ollama (qwen3.5:9b)
-            local_client = OllamaClient(use_cloud=False)
-            result = await local_client.chat(
-                messages=[
-                    {"role": "system", "content": EXPLANATION_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_msg},
-                ],
-                temperature=0.3,
-                max_tokens=2048,
-            )
-            raw_text = result.get("content", "")
-            logger.info("explanation_agent.local_fallback_success", content_length=len(raw_text))
+            logger.info("explanation_agent.local_success", content_length=len(raw_text))
 
     # Parse three-section response
     parsed = parse_three_section_response(raw_text)

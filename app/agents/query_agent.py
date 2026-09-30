@@ -14,6 +14,7 @@ from typing import Any
 
 import structlog
 
+from app.config import get_settings
 from app.llm.ollama_client import OllamaClient
 
 logger = structlog.get_logger()
@@ -235,7 +236,7 @@ async def query_agent_node(state: dict[str, Any]) -> dict[str, Any]:
         }
 
     logger.info("query_agent.starting", query=user_query[:200])
-    ollama = OllamaClient(use_cloud=True)
+    ollama = OllamaClient(use_cloud=get_settings().llm_use_cloud)
 
     try:
         # Step 1: Extract intent using local Ollama

@@ -6,19 +6,16 @@ Triggers:
 3. Query Agent flags intent as ambiguous
 
 Executes:
-- ChromaDB episodic search (top-20)
-- ChromaDB semantic search (top-10)
-- Merges and deduplicates results
+- Qdrant Edge semantic search over LOCAL and FLEET memory
+- Deduplicates results
 """
 
 from __future__ import annotations
 
-import asyncio
 from typing_extensions import TypedDict
 
 import structlog
 
-from app.database.chroma_client import get_chromadb_client
 from app.schemas.retrieval import RetrievalConfig
 
 logger = structlog.get_logger()
@@ -100,48 +97,41 @@ async def execute_vector_fallback(
     top_k: int | None = None,
     config: RetrievalConfig | None = None,
 ) -> FallbackResult:
-    """Execute vector fallback search via ChromaDB.
+    """Execute vector fallback search against local Qdrant Edge memory.
 
-    Searches both episodic and semantic memory, merges results,
-    and returns deduplicated entities with similarity scores.
-
-    Args:
-        query: Original user query for semantic search
-        top_k: Number of results per collection (default from config)
-        config: Retrieval configuration
-
-    Returns:
-        FallbackResult with combined results and scores
+    Runs semantic search over LOCAL and FLEET origins; no cloud services or
+    external vector stores are contacted.
     """
+    from app.edge.memory.hybrid_search import SearchMode
+    from app.edge.registry import get_edge_runtime
+
     config = config or RetrievalConfig()
     top_k = top_k or config.fallback_top_k
-
     logger.info("fallback.executing", query=query[:50], top_k=top_k)
 
-    chroma_client = get_chromadb_client()
+    runtime = get_edge_runtime()
+    items: list[dict] = []
+    if runtime is not None:
+        try:
+            hits = await runtime.search.search(query, SearchMode.SEMANTIC, top_k)
+        except Exception as e:
+            logger.error("fallback.edge_error", error=str(e))
+            hits = []
+        for hit in hits:
+            items.append(
+                {
+                    "id": hit.point_id,
+                    "type": "edge",
+                    "content": hit.payload.get("content", ""),
+                    "similarity": hit.dense_score if hit.dense_score is not None else hit.score,
+                    "metadata": {**hit.payload, "origin": hit.origin.value},
+                }
+            )
 
-    # Execute both searches in parallel
-    episodic_task = _search_episodic(chroma_client, query, top_k)
-    semantic_task = _search_semantic(chroma_client, query, max(1, top_k // 2))
-
-    episodic_results, semantic_results = await asyncio.gather(
-        episodic_task, semantic_task
-    )
-
-    # Merge and deduplicate by entity/content
-    combined = merge_fallback_results(episodic_results, semantic_results)
-
-    # Apply similarity threshold filter
+    combined = merge_fallback_results(items, [])
     threshold = config.similarity_threshold
     filtered = [r for r in combined if r["similarity"] >= threshold]
-
-    logger.info(
-        "fallback.complete",
-        episodic=len(episodic_results),
-        semantic=len(semantic_results),
-        combined=len(combined),
-        filtered=len(filtered),
-    )
+    logger.info("fallback.complete", combined=len(combined), filtered=len(filtered))
 
     return FallbackResult(
         results=filtered,
@@ -151,78 +141,6 @@ async def execute_vector_fallback(
         ),
         combined_scores=[r["similarity"] for r in filtered],
     )
-
-
-async def _search_episodic(client, query: str, limit: int) -> list[dict]:
-    """Search episodic memory."""
-    try:
-        collection = client.get_episodic_collection()
-        embedding_service = client._embedding_service
-
-        embedding = await embedding_service.embed_text(query)
-
-        results = collection.query(
-            query_embeddings=[embedding],
-            n_results=limit,
-            include=["documents", "metadatas", "distances"],
-        )
-
-        items = []
-        if results["ids"] and results["ids"][0]:
-            for i, ep_id in enumerate(results["ids"][0]):
-                distance = results["distances"][0][i] if "distances" in results else 1.0
-                similarity = 1.0 - distance
-
-                items.append(
-                    {
-                        "id": ep_id,
-                        "type": "episodic",
-                        "content": results["documents"][0][i],
-                        "similarity": similarity,
-                        "metadata": results["metadatas"][0][i],
-                    }
-                )
-
-        return items
-    except Exception as e:
-        logger.error("fallback.episodic_error", error=str(e))
-        return []
-
-
-async def _search_semantic(client, query: str, limit: int) -> list[dict]:
-    """Search semantic memory."""
-    try:
-        collection = client.get_semantic_collection()
-        embedding_service = client._embedding_service
-
-        embedding = await embedding_service.embed_text(query)
-
-        results = collection.query(
-            query_embeddings=[embedding],
-            n_results=limit,
-            include=["documents", "metadatas", "distances"],
-        )
-
-        items = []
-        if results["ids"] and results["ids"][0]:
-            for i, pref_id in enumerate(results["ids"][0]):
-                distance = results["distances"][0][i] if "distances" in results else 1.0
-                similarity = 1.0 - distance
-
-                items.append(
-                    {
-                        "id": pref_id,
-                        "type": "semantic",
-                        "content": results["documents"][0][i],
-                        "similarity": similarity,
-                        "metadata": results["metadatas"][0][i],
-                    }
-                )
-
-        return items
-    except Exception as e:
-        logger.error("fallback.semantic_error", error=str(e))
-        return []
 
 
 def merge_fallback_results(

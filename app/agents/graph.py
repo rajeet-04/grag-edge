@@ -37,11 +37,7 @@ from app.agents.explanation_agent import explanation_agent_node  # noqa: F401
 from app.agents.graph_builder import graph_builder_agent_node  # noqa: F401
 from app.agents.ingestion_agent import ingestion_agent_node  # noqa: F401
 from app.agents.query_agent import query_agent_node  # noqa: F401
-from app.retrieval.fallback import (
-    FallbackResult,
-    check_fallback_trigger,
-    execute_vector_fallback,
-)
+from app.retrieval.fallback import check_fallback_trigger
 from app.schemas.retrieval import RetrievalConfig
 
 # ---------------------------------------------------------------------------
@@ -56,7 +52,7 @@ async def kr_search_node(state: GraphState) -> dict[str, Any]:
     1. Execute LLM-generated Cypher query
     2. BFS validation + depth cap (handled by Neo4jClient)
     3. Check multi-signal fallback trigger
-    4. If fallback: Execute ChromaDB search
+    4. Weak graph result: edge memory (always run) supplies the vector evidence
     5. Return unified results to state
     """
     config = RetrievalConfig()
@@ -123,21 +119,16 @@ async def kr_search_node(state: GraphState) -> dict[str, Any]:
                 graph_entities=len(kr_entities),
             )
 
-            fallback_result: FallbackResult = await execute_vector_fallback(
-                query=user_query,
-                config=config,
-            )
-
+            # Vector fallback is served by the always-on edge memory node.
             existing_trace = state.get("agent_trace", [])
             return {
-                "kr_entities": fallback_result["results"],
-                "kr_relations": [],
-                "kr_paths": [],
+                "kr_entities": kr_entities,
+                "kr_relations": kr_relations,
+                "kr_paths": kr_paths,
                 "agent_trace": existing_trace
                 + [
                     f"KRSearch: Cypher returned {len(kr_entities)} entities",
-                    f"KRSearch: Fallback triggered ({trigger['reason']})",
-                    f"KRSearch: Vector returned {len(fallback_result['results'])} results",
+                    f"KRSearch: weak graph result ({trigger['reason']}); edge memory is authoritative",
                 ],
             }
 

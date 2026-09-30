@@ -8,7 +8,7 @@ try:
         execute_vector_fallback,
     )
 except ImportError:
-    pass  # chromadb may not be installed in test environments
+    pass
 
 try:
     from app.retrieval.ranker import (

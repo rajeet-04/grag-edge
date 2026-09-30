@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
+from app.config import get_settings
 from app.llm.ollama_client import OllamaClient
 
 
@@ -54,8 +55,8 @@ class EntityExtractionService:
     """
 
     def __init__(self) -> None:
-        """Initialize the entity extraction service using Ollama cloud."""
-        self.ollama_client = OllamaClient(use_cloud=True)
+        """Initialize the entity extraction service using local Ollama (cloud only via LLM_USE_CLOUD)."""
+        self.ollama_client = OllamaClient(use_cloud=get_settings().llm_use_cloud)
         self._in_memory_store: Dict[str, Dict[str, Any]] = {}
 
     async def extract_entities(self, text: str) -> List[Dict[str, Any]]:

@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
+from app.config import get_settings
 from app.llm.ollama_client import OllamaClient
 
 
@@ -70,7 +71,7 @@ class RelationExtractionService:
 
     def __init__(self) -> None:
         """Initialize the relationship extraction service using Ollama cloud."""
-        self.ollama_client = OllamaClient(use_cloud=True)
+        self.ollama_client = OllamaClient(use_cloud=get_settings().llm_use_cloud)
 
     async def extract_relations(
         self,
