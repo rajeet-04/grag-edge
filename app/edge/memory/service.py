@@ -65,7 +65,7 @@ class MemoryService:
 
     def _commit_policy(
         self, record: MemoryRecord, event_type: str, deleted: bool = False,
-        force_state: SyncState | None = None,
+        force_state: SyncState | None = None, extra_retraction_ids: tuple[str, ...] = (),
     ) -> MemoryRecord:
         if self.policy_workflow is None:
             return record
@@ -75,7 +75,7 @@ class MemoryService:
             else self.policy_engine.evaluate(record)
         )
         state = force_state or self._decision_state(record, decision)
-        self.policy_workflow.commit_record(record, decision, state, event_type)
+        self.policy_workflow.commit_record(record, decision, state, event_type, extra_retraction_ids)
         return self._overlay(record)
 
     async def _write(self, record: MemoryRecord) -> MemoryRecord:
@@ -146,6 +146,46 @@ class MemoryService:
         records = [record for record in self._records() if record.logical_id == logical_id]
         return max(records, key=lambda r: r.revision) if records and not max(records, key=lambda r: r.revision).is_deleted else None
 
+    def _peer_resolution(self, latest: MemoryRecord) -> Any | None:
+        """Return the newest fleet point of this logical memory that supersedes `latest`.
+
+        Only same-logical resolutions count: resolves_memory_ids naming a memory
+        of another logical_id are ignored (see conflicts.service.trusted_resolves).
+        """
+        from app.edge.conflicts.service import trusted_resolves
+
+        logical_of = {r.memory_id: r.logical_id for r in self._all_records()}
+        winners = []
+        for point in self.store.list_fleet_points():
+            payload = point.payload
+            if payload.get("record_type") != "memory" or payload.get("logical_id") != latest.logical_id:
+                continue
+            resolves = trusted_resolves(payload.get("resolves_memory_ids") or (), latest.logical_id, logical_of)
+            if latest.memory_id in resolves:
+                winners.append(point)
+        if not winners:
+            return None
+        return max(winners, key=lambda p: (int(p.payload.get("revision", 0)), p.id))
+
+    def _adopt_peer_resolution(self, latest: MemoryRecord, point: Any) -> MemoryRecord:
+        """Restore a peer's resolution locally so this device continues from it.
+
+        The resolution becomes the local head (history stays linear, no fork). It
+        is recorded as SUPERSEDED policy state so it is never re-uploaded as this
+        device's own work, and its ID is queued for fleet retraction should the
+        memory later be deleted. New revisions are attributed to this device.
+        """
+        try:
+            resolution = MemoryRecord.model_validate(point.payload)
+        except Exception as exc:
+            raise ValueError(f"peer resolution for {latest.logical_id} is invalid: {exc}") from exc
+        if resolution.is_deleted or resolution.memory_id != point.id:
+            raise ValueError(f"peer resolution for {latest.logical_id} is not adoptable")
+        self.store.upsert(point)
+        if self.policy_workflow is not None and self.policy_workflow.get(resolution.memory_id) is None:
+            self._commit_policy(resolution, "MEMORY_ADOPTED", force_state=SyncState.SUPERSEDED)
+        return self._overlay(resolution).model_copy(update={"device_id": latest.device_id})
+
     def _writable_current(self, logical_id: str) -> MemoryRecord | None:
         """Restore a cleaned fleet copy locally only when this device proves ownership."""
         local = [record for record in self._records() if record.logical_id == logical_id]
@@ -153,13 +193,9 @@ class MemoryService:
             latest = max(local, key=lambda record: record.revision)
             if latest.is_deleted:
                 return None
-            for point in self.store.list_fleet_points():
-                payload = point.payload
-                if (payload.get("record_type") == "memory" and payload.get("logical_id") == logical_id
-                        and latest.memory_id in (payload.get("resolves_memory_ids") or ())):
-                    raise ValueError(
-                        f"memory {logical_id} was resolved by a peer at revision {payload.get('revision')}; "
-                        "the local head is superseded and cannot be revised or deleted")
+            adopted = self._peer_resolution(latest)
+            if adopted is not None:
+                return self._adopt_peer_resolution(latest, adopted)
             return latest
         if self.state_db is None:
             return None
@@ -250,7 +286,9 @@ class MemoryService:
                 "parent_revision": current.revision, "is_deleted": True, "content_hash": self.content_hash(current.content),
                 "sync_policy": SyncPolicy.LOCAL_ONLY, "sync_state": SyncState.LOCAL_DIRTY, "sync_reason_codes": ()})
             stored = await self._write(record)
-            return self._commit_policy(stored, "MEMORY_REVISED", deleted=True)
+            # A head that also lives in the fleet (adopted peer resolution) is withdrawn too.
+            extra = (current.memory_id,) if self.store.retrieve_fleet(current.memory_id) is not None else ()
+            return self._commit_policy(stored, "MEMORY_REVISED", deleted=True, extra_retraction_ids=extra)
 
     async def approve(self, memory_id: str) -> MemoryRecord:
         async with self._write_lock:

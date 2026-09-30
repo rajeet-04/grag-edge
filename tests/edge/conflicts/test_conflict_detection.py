@@ -214,3 +214,10 @@ def test_ancestor_relationship_is_not_a_conflict(tmp_path):
     local = memory(memory_id="local-2", content="edit", revision=2, parent_revision=1)
     fleet3 = memory(memory_id="fleet-3", content="later edit", revision=3, parent_revision=2, device_id="robot-2")
     assert conflicts.detect(local, fleet3, local_history=[base, local], fleet_history=[base, local, fleet3]) is None
+
+
+def test_trusted_resolves_drops_ids_of_other_logical_memories():
+    from app.edge.conflicts.service import trusted_resolves
+
+    logical_of = {"mine-1": "L", "foreign-1": "M"}
+    assert trusted_resolves(("mine-1", "foreign-1", "unknown"), "L", logical_of) == ("mine-1", "unknown")

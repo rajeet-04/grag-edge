@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import math
 from typing import Any
 
+from app.edge.conflicts.service import trusted_resolves
 from app.edge.memory.models import MemoryRecord, Sensitivity, SyncPolicy, SyncState
 from app.edge.memory.store import StoredPoint
 from app.edge.state.activity import ActivityEvent, ActivityLog
@@ -390,20 +391,36 @@ class SyncService:
         for record in local_records:
             if record.logical_id not in heads or heads[record.logical_id].revision < record.revision:
                 heads[record.logical_id] = record
+        fleet_points = [p for p in list_fleet() if p.payload.get("record_type") == "memory"]
+        logical_of = {r.memory_id: r.logical_id for r in local_records}
+        logical_of.update({p.payload.get("memory_id", p.id): p.payload.get("logical_id") for p in fleet_points})
         fleet_by_logical: dict[str, list[Any]] = {}
-        for point in list_fleet():
-            if point.payload.get("record_type") == "memory":
-                try:
-                    fleet_by_logical.setdefault(point.payload["logical_id"], []).append(MemoryRecord.model_validate(point.payload))
-                except Exception:
-                    continue
+        for point in fleet_points:
+            try:
+                record = MemoryRecord.model_validate(point.payload)
+            except Exception:
+                continue
+            record = record.model_copy(update={"resolves_memory_ids": trusted_resolves(
+                record.resolves_memory_ids, record.logical_id, logical_of)})
+            fleet_by_logical.setdefault(record.logical_id, []).append(record)
+
+        def tips_of(records: list[Any]) -> list[Any]:
+            return [r for r in records if not any(
+                (c.parent_revision == r.revision and c.revision > r.revision) or r.memory_id in c.resolves_memory_ids
+                for c in records)]
+
         found = 0
         for conflict in self.conflicts.list_open():
             head = heads.get(conflict.logical_id)
-            resolved_ids = {i for r in fleet_by_logical.get(conflict.logical_id, []) for i in r.resolves_memory_ids}
+            fleet_records = fleet_by_logical.get(conflict.logical_id, [])
+            resolved_ids = {i for r in fleet_records for i in r.resolves_memory_ids}
+            fleet_tip_ids = {r.memory_id for r in tips_of(fleet_records)}
             if conflict.status == "OPEN" and (
                     (head is not None and head.memory_id != conflict.local_memory_id)
-                    or {conflict.local_memory_id, conflict.fleet_memory_id} <= resolved_ids):
+                    or {conflict.local_memory_id, conflict.fleet_memory_id} <= resolved_ids
+                    # Present in the fleet but superseded by a descendant/resolution (absence is not proof).
+                    or (conflict.fleet_memory_id in {r.memory_id for r in fleet_records}
+                        and conflict.fleet_memory_id not in fleet_tip_ids)):
                 self.conflicts.close_stale(conflict.conflict_id)
                 if head is not None and head.memory_id == conflict.local_memory_id:
                     with self.db.transaction() as conn:
@@ -416,10 +433,7 @@ class SyncService:
             own_ids = self._own_memory_ids(logical_id)
             local_history = [r for r in local_records if r.logical_id == logical_id]
             local_history += [r for r in fleet_records if r.memory_id in own_ids and r.memory_id not in {h.memory_id for h in local_history}]
-            tips = [r for r in fleet_records if not any(
-                (c.parent_revision == r.revision and c.revision > r.revision) or r.memory_id in c.resolves_memory_ids
-                for c in fleet_records)]
-            for fleet in sorted(tips, key=lambda r: (r.revision, r.memory_id)):
+            for fleet in sorted(tips_of(fleet_records), key=lambda r: (r.revision, r.memory_id)):
                 if fleet.memory_id == local.memory_id:
                     continue
                 conflict = self.conflicts.detect(local, fleet, local_history=local_history, fleet_history=fleet_records)

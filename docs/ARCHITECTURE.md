@@ -67,6 +67,16 @@ for the same logical memory. Records keep both revisions, provenance and the sha
 (`KEEP_LOCAL`, `ACCEPT_FLEET`, `MERGE`) writes a new revision that supersedes both. Conflicted revisions are
 blocked from upload and revision until resolved.
 
+A device whose head was resolved by a peer adopts the peer's resolution the next time the operator revises
+or deletes that memory: the resolution is restored locally as the head (no fork), new revisions build on it,
+and a delete also retracts the adopted resolution from the fleet. Open conflicts are closed when their fleet
+branch is still present but has been superseded by a descendant or a resolution.
+
+Trust model: `resolves_memory_ids` on a fleet record is accepted only for branches of the same
+`logical_id`; IDs known to belong to another logical memory are ignored. Fleet peers are not individually
+authenticated (they share the fleet Qdrant credential), so a peer can still publish a same-logical
+resolution; the validation bounds its effect to that one memory and does not authenticate the peer.
+
 ## Observability
 
 `GET /edge/status`, `/edge/stats` (local/fleet counts, origin counts, pending sync, conflicts, last sync,

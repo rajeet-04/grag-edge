@@ -19,6 +19,19 @@ _OPEN_STATUSES = ("OPEN", "RESOLVING")
 RESOLUTIONS = frozenset({"KEEP_LOCAL", "ACCEPT_FLEET", "MERGE"})
 
 
+def trusted_resolves(resolves: Iterable[str], logical_id: str, logical_of: dict[str, str]) -> tuple[str, ...]:
+    """Keep only resolved-branch IDs that can belong to `logical_id`.
+
+    A fleet record may only supersede branches of its own logical memory. An ID
+    known to belong to a different logical memory is dropped; an unknown ID is
+    kept because it cannot match anything this device holds (so it is inert).
+    Trust model: any fleet writer holding the shared Qdrant credential could
+    already upsert arbitrary points, so this bounds the blast radius of a bad
+    `resolves_memory_ids` to the named logical memory instead of authenticating peers.
+    """
+    return tuple(i for i in resolves if logical_of.get(i, logical_id) == logical_id)
+
+
 class ConflictResolutionError(ValueError):
     """Raised when a resolution request is invalid or contradicts a prior one."""
 

@@ -46,6 +46,7 @@ class PolicyWorkflow:
         decision: SyncDecision,
         state: SyncState,
         memory_event: str,
+        extra_retraction_ids: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         with self.db.transaction() as conn:
             existing = conn.execute("SELECT * FROM memory_policy WHERE memory_id=?", (record.memory_id,)).fetchone()
@@ -55,7 +56,7 @@ class PolicyWorkflow:
                 if state is SyncState.QUEUED:
                     SyncOutbox.enqueue_in_transaction(conn, record.memory_id, record.logical_id, record.revision)
                 if record.is_deleted:
-                    self._queue_retraction(conn, record)
+                    self._queue_retraction(conn, record, extra_retraction_ids)
                 return self._view(existing)
 
             latest = conn.execute(
@@ -89,7 +90,7 @@ class PolicyWorkflow:
                     raise ValueError("privacy policy forbids enqueueing this record")
                 SyncOutbox.enqueue_in_transaction(conn, record.memory_id, record.logical_id, record.revision)
             if record.is_deleted:
-                self._queue_retraction(conn, record)
+                self._queue_retraction(conn, record, extra_retraction_ids)
             self._event(conn, record, memory_event, "Memory record stored", {"revision": record.revision})
             if state is SyncState.LOCAL_ONLY:
                 self._event(conn, record, "POLICY_LOCAL_ONLY", "Memory remains local", {"reason_codes": reason_codes})
@@ -98,7 +99,7 @@ class PolicyWorkflow:
             return self._view(conn.execute("SELECT * FROM memory_policy WHERE memory_id=?", (record.memory_id,)).fetchone())
 
     @staticmethod
-    def _queue_retraction(conn, tombstone: MemoryRecord) -> None:
+    def _queue_retraction(conn, tombstone: MemoryRecord, extra_ids: tuple[str, ...] = ()) -> None:
         """Persist IDs of earlier revisions whose remote acceptance is possible.
 
         A started attempt can have an ambiguous timeout, so any attempt row is
@@ -114,6 +115,7 @@ class PolicyWorkflow:
             (tombstone.logical_id, tombstone.revision),
         ).fetchall()
         target_ids = [row["memory_id"] for row in rows]
+        target_ids += [i for i in extra_ids if i not in target_ids and i != tombstone.memory_id]
         if not target_ids:
             return
         retraction_id = str(uuid5(NAMESPACE_URL, f"grag-retraction:{tombstone.logical_id}:{tombstone.revision}:{tombstone.memory_id}"))

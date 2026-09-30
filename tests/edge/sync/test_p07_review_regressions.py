@@ -187,37 +187,132 @@ def test_superseded_open_conflict_is_closed_by_scan(tmp_path):
     asyncio.run(run())
 
 
-def test_peer_resolution_blocks_fork_and_false_delete_on_losing_device(tmp_path):
-    """N6: a device whose head was resolved by a peer must not fork or delete only its own copy."""
+def _losing_device_setup(tmp_path):
     A = fresh(tmp_path / "a")
     B = fresh(tmp_path / "b")
     B[5].points = A[5].points
     B[6].remote = A[5]
     B[7].remote = A[5]
+    return A, B
+
+
+async def _peer_resolves(A, B):
     memories_a, sync_a = A[4], A[7]
+    memories_b, sync_b = B[4], B[7]
+    r1 = await memories_a.create(CreateMemory(content="fleet safe base", memory_type=MemoryType.LEARNED_FACT))
+    await sync_a.run_once()
+    await memories_b.create(CreateMemory(content="fleet safe base", memory_type=MemoryType.LEARNED_FACT,
+                                         memory_id=r1.memory_id, logical_id=r1.logical_id))
+    await sync_b.run_once()
+    await memories_a.revise(r1.logical_id, ReviseMemory(content="fleet safe A edit", parent_revision=1))
+    b2 = await memories_b.revise(r1.logical_id, ReviseMemory(content="fleet safe B edit", parent_revision=1))
+    await sync_a.run_once()
+    await sync_b.run_once()
+    await sync_a.run_once()
+    conflict = sync_a.conflicts.list_open()[0]
+    resolved = await sync_a.conflicts.resolve(conflict.conflict_id, "KEEP_LOCAL", memories_a)
+    for _ in range(2):
+        await sync_a.run_once()
+        await sync_b.run_once()
+    return r1, b2, resolved
+
+
+def test_losing_device_adopts_peer_resolution_without_fork(tmp_path):
+    """N6 follow-up: revising after a peer resolution builds on the resolution (no fork)."""
+    A, B = _losing_device_setup(tmp_path)
     memories_b, sync_b = B[4], B[7]
 
     async def run():
-        r1 = await memories_a.create(CreateMemory(content="fleet safe base", memory_type=MemoryType.LEARNED_FACT))
-        await sync_a.run_once()
-        await memories_b.create(CreateMemory(content="fleet safe base", memory_type=MemoryType.LEARNED_FACT,
-                                             memory_id=r1.memory_id, logical_id=r1.logical_id))
-        await sync_b.run_once()
-        await memories_a.revise(r1.logical_id, ReviseMemory(content="fleet safe A edit", parent_revision=1))
-        await memories_b.revise(r1.logical_id, ReviseMemory(content="fleet safe B edit", parent_revision=1))
-        await sync_a.run_once()
-        await sync_b.run_once()
-        await sync_a.run_once()
-        conflict = sync_a.conflicts.list_open()[0]
-        await sync_a.conflicts.resolve(conflict.conflict_id, "KEEP_LOCAL", memories_a)
-        for _ in range(2):
-            await sync_a.run_once()
+        r1, b2, resolved = await _peer_resolves(A, B)
+        revised = await memories_b.revise(r1.logical_id, ReviseMemory(content="B follows resolution",
+                                                                      parent_revision=resolved.resolution_revision))
+        assert revised.parent_revision == resolved.resolution_revision
+        assert revised.revision == resolved.resolution_revision + 1
+        assert revised.device_id == b2.device_id
+        history = memories_b.history(r1.logical_id)
+        assert [r.revision for r in history] == [1, 2, 2, resolved.resolution_revision, revised.revision][: len(history)]
+        assert history[-2].memory_id == resolved.resolution_memory_id
+        for _ in range(3):
             await sync_b.run_once()
-        before = [(r.revision, r.memory_id) for r in memories_b.history(r1.logical_id)]
-        with pytest.raises(ValueError, match="resolved by a peer"):
-            await memories_b.revise(r1.logical_id, ReviseMemory(content="fork", parent_revision=2))
-        with pytest.raises(ValueError, match="resolved by a peer"):
-            await memories_b.tombstone(r1.logical_id)
-        assert [(r.revision, r.memory_id) for r in memories_b.history(r1.logical_id)] == before
+        assert sync_b.conflicts.list_open() == []
+        assert memories_b.list()[0].memory_id == revised.memory_id
+
+    asyncio.run(run())
+
+
+def test_losing_device_tombstone_retracts_fleet_copies_after_adoption(tmp_path):
+    """N6 follow-up: deleting after a peer resolution removes the resolution from the fleet too."""
+    A, B = _losing_device_setup(tmp_path)
+    memories_b, sync_b, remote = B[4], B[7], A[5]
+
+    async def run():
+        r1, b2, resolved = await _peer_resolves(A, B)
+        assert resolved.resolution_memory_id in remote.points
+        tomb = await memories_b.tombstone(r1.logical_id)
+        assert tomb.is_deleted and tomb.parent_revision == resolved.resolution_revision
+        for _ in range(3):
+            await sync_b.run_once()
+        assert resolved.resolution_memory_id not in remote.points
+        assert b2.memory_id not in remote.points
+        assert memories_b.list() == []
+
+    asyncio.run(run())
+
+
+def test_open_conflict_closes_when_fleet_branch_is_no_longer_a_tip(tmp_path):
+    """N7: a third device extending the fleet branch supersedes the old conflict."""
+    store, db, activity, outbox, memories, remote, snapshots, sync = fresh(tmp_path)
+
+    async def run():
+        record = await memories.create(CreateMemory(content="fleet safe proc v1", memory_type=MemoryType.LEARNED_FACT))
+        await sync.run_once()
+        local2 = await memories.revise(record.logical_id, ReviseMemory(content="local v2", parent_revision=1))
+        f_id, g_id = "00000000-0000-0000-0000-0000000000e1", "00000000-0000-0000-0000-0000000000e2"
+        fleet_f = other_branch(remote, local2, f_id, "fleet v2")
+        await snapshots.refresh()
+        await sync.run_once()
+        (first,) = sync.conflicts.list_open()
+        assert first.fleet_memory_id == f_id
+        g = fleet_f.model_copy(update={"memory_id": g_id, "content": "third device v3", "revision": 3,
+                                       "parent_revision": 2, "content_hash": "h-" + g_id, "device_id": "robot-3"})
+        remote.points[g_id] = StoredPoint(g_id, [1, 0, 0, 0], {"indices": [1], "values": [1.0]},
+                                          {"record_type": "memory", **g.model_dump(mode="json")})
+        await snapshots.refresh()
+        await sync.run_once()
+        open_now = sync.conflicts.list_open()
+        assert [c.fleet_memory_id for c in open_now] == [g_id]
+        assert sync.conflicts.get(first.conflict_id).status == "STALE"
+
+    asyncio.run(run())
+
+
+def test_fleet_resolves_ids_of_other_logical_memories_are_not_trusted(tmp_path):
+    """N8: resolves_memory_ids may only supersede branches of the same logical memory."""
+    store, db, activity, outbox, memories, remote, snapshots, sync = fresh(tmp_path)
+
+    async def run():
+        victim = await memories.create(CreateMemory(content="fleet safe proc v1", memory_type=MemoryType.LEARNED_FACT))
+        other = await memories.create(CreateMemory(content="unrelated fact", memory_type=MemoryType.LEARNED_FACT))
+        await sync.run_once()
+        local2 = await memories.revise(victim.logical_id, ReviseMemory(content="local v2", parent_revision=1))
+        f_id = "00000000-0000-0000-0000-0000000000d1"
+        other_branch(remote, local2, f_id, "fleet v2")
+        await snapshots.refresh()
+        await sync.run_once()
+        assert len(sync.conflicts.list_open()) == 1
+        # A foreign-logical fleet record claims to resolve this memory's branches.
+        foreign = other.model_copy(update={"memory_id": "00000000-0000-0000-0000-0000000000d3", "revision": 2,
+                                           "parent_revision": 1, "content": "foreign", "content_hash": "h-d3",
+                                           "resolves_memory_ids": (local2.memory_id, f_id)})
+        for rec in (foreign,):
+            remote.points[rec.memory_id] = StoredPoint(rec.memory_id, [1, 0, 0, 0], {"indices": [1], "values": [1.0]},
+                                                       {"record_type": "memory", **rec.model_dump(mode="json")})
+        await snapshots.refresh()
+        await sync.run_once()
+        # The foreign record must not close this logical memory's conflict.
+        statuses = [sync.conflicts.get(c.conflict_id).status for c in sync.conflicts.list_open()]
+        assert "OPEN" in statuses
+        first = [c for c in sync.conflicts.list_open() if c.fleet_memory_id == f_id]
+        assert first, "conflict with the original fleet branch must stay open"
 
     asyncio.run(run())
