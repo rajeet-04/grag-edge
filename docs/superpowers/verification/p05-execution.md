@@ -41,3 +41,4 @@ Focused tests were RED (3 failures) because attempt rows lacked `started_at`, `f
 - `UV_CACHE_DIR=/private/tmp/grag-edge-uv-cache uv run pytest tests/edge/sync/test_outbox.py -q`: **7 passed**.
 - `UV_CACHE_DIR=/private/tmp/grag-edge-uv-cache uv run pytest tests/edge -q`: **91 passed, 1 skipped**.
 - `PATH=/private/tmp/grag-edge-runtime/bin:$PATH DOCKER_HOST=tcp://127.0.0.1:23750 UV_CACHE_DIR=/private/tmp/grag-edge-uv-cache make baseline-check`: exit 0, **291 passed, 2 skipped, exact 10 known imported failures**; baseline validator reported no regression.
+- Repeated both gates from a clean `git archive` of commit `bd1d5b5`, excluding in-progress P06 working-tree files: edge suite **91 passed, 1 skipped**; baseline validator **291 passed, 2 skipped, exact same 10 known imported failures**, no regression.
