@@ -50,3 +50,20 @@ test("console loads, navigates, searches, and reflects a link transition in unde
 
   expect(problems).toEqual([]);
 });
+
+test.describe("reduced motion", () => {
+  test.use({ reducedMotion: "reduce" });
+  test("link state still flips within 2 s and decorative motion is off", async ({ page }) => {
+    await setLink(page, "ONLINE");
+    await page.goto("/");
+    await expect(page.getByTestId("fleet-link")).toHaveText("ONLINE");
+    await expect(page.locator(".ls-packet")).toBeHidden();
+    await expect(page.locator(".route-bar")).toBeHidden();
+    await setLink(page, "OFFLINE");
+    await expect(page.getByTestId("fleet-link")).toHaveText("OFFLINE", { timeout: 2000 });
+    await expect(page.locator(".linkstrip")).toHaveAttribute("data-link", "OFFLINE");
+    const anims = await page.evaluate(() => document.getAnimations().filter((a) => (a as CSSAnimation).animationName).length);
+    expect(anims).toBe(0);
+    await setLink(page, "ONLINE");
+  });
+});
