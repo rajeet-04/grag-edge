@@ -19,7 +19,7 @@ P00 is complete at `45fae76`; its regression gate accepts full green or exactly 
 - P02: PASS (`f5e10a4..964e306`); root planned retrieval gate 7/7, all memory tests 13/13.
 - P03: PASS (`0cc767c..26166e3`); root native edge gate 33/33; root baseline-check exit 0 (233 passed, 1 skipped, exact 10 imported failures). Independent boundary A re-review at 26166e3 passed all five Important fixes, native 768-dimensional persistence and fleet immutability.
 - P04: PASS (`89cd809..8366e95`); native recovery fix independently reviewed PASS. Root isolated fix gate 58 edge tests, baseline-check exit 0 (258 passed, 1 skipped, exact 10 imported failures).
-- P05: PASS (`f4ddc65..363e803`); root edge 72/72 and baseline-check exit 0 (272 passed, 1 skipped, exact 10). Actual Docker disconnected/reconnected cloud bridge; offline local embedding-backed create/revise/hybrid, restricted exclusion, cloudless startup and idempotent remote upsert verified.
+- P05: PASS (`f4ddc65..6b169e8`, evidence020d997); realDockeroffline/reconnect verified; atomic worker/privacy/shutdown/attempt-history fixes independently reviewed PASS. Root actual current edge93passed1skip; baselineexit0(293passed2skip exact10).
 - P06: IN PROGRESS.
 - P07–P12: NOT STARTED.
 
@@ -50,3 +50,21 @@ P04 recovery fix8366e95 (isolatedbbb3fac): missing root/intermediate operational
 P05 runtime configuration finding: an explicitly blank Qdrant service API key enabled authentication unexpectedly → omit unset server-key configuration for credential-free demo, retain optional client key → real HTTP401 classification remained ERROR and correcting config restored ONLINE → risk: secure deployment must explicitly configure matching keys.
 
 P05 also fixed the deferred minor PATCH SQLite error mapping to503 with a retained test. P06 owns only subsequent snapshot confirmation and synchronization completion; UPLOADED alone is not synchronized.
+
+P05 review blockers at363e803: pre-send privacy denial cannot cancel UPLOADING; split claim/control-state transactions can strand work; successful attempts missing history; shutdown closes DB/transport while an owned health thread remains active. Dedicated retained RED/GREEN fix pass owns worker/outbox/runtime; P06 independent adapter work may continue.
+
+P06 Task1 at181209b: real Qdrant1.17.1 full shard snapshot imported/reopened by Edge0.8.0 with two fleet points; root bootstrap3/3 passed.
+
+Ruling: os.replace cannot atomically replace an existing nonempty fleet directory → stage immutable generation directories and atomically publish a small current-generation pointer under fleet-only locks → required rollback and restart safety are preserved without a two-rename crash gap → risk if wrong: stale generation/checkpoint; native restart/failure/partial tests required.
+
+P05 bf08e33 scoped native re-review: atomic claim/rollback, pre-send cancellation, effective payload projection and shutdown joins passed (19 targeted tests). Remaining Important: attempt rows lack persisted end time and outcome required by spec section12; success/cancel/active indistinguishable. Separate schema/transition repair underway before P06 integration.
+
+P06 Task2 at50e6059: bootstrap/partial/native suite29passed, actual Docker full→changed partial→deleted point→unchanged partial→reopen gate root1passed1.92s. Generation base capture prevents applying a stale downloaded delta, staged apply preserves active shard, cancellation joins native worker, local writes remain available. P06 Task3 held pending P05 review clearance.
+
+P05 bd1d5b5 adds atomic attempt start/end/outcomes; fresh native transition checks and17targeted tests pass. Root active suite93passed1skip, baselineexit0(293passed2skip exact10). Remaining migration finding: legacy timestamps/outcomes were inferred without evidence.
+
+Ruling: legacy attempt rows lack sufficient historical timing/outcome evidence → preserve original created_at and mark legacy outcome UNKNOWN with missing timestamps left NULL; only newly observed attempts must have complete lifecycle fields → fabricated history would undermine inspection/recovery evidence → risk: older history has explicit gaps, UI/history must handle unknowns without scheduling uploads again.
+
+P06 recovery fixaa8efbf rejects incomplete publication metadata and retains first-publication recovery pointer; native recovery tests observedREDthenGREEN.
+
+P05 final scoped clearance6b169e8: native old-bf08 migration retains genuine created_at/error, start/end NULL and LEGACY_UNKNOWN without queue resets. New FAILED→SUCCESS/CANCELLED/INTERRUPTED records persist real timings/outcomes across reopen. All reviewed Important/Critical resolved; P06 Task3 hold released.
