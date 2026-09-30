@@ -9,6 +9,8 @@ from app.edge.memory.hybrid_search import (
 )
 from app.edge.memory.qdrant_store import QdrantEdgeStore
 from app.edge.memory.store import StoredPoint
+from app.edge.state.sqlite import EdgeStateDB
+import json
 
 
 class DeterministicEmbedding:
@@ -132,3 +134,41 @@ async def test_fleet_results_keep_fleet_origin(tmp_path):
     assert results[0].point_id == target.id
     assert results[0].origin is MemoryOrigin.FLEET
     store.close()
+
+
+@pytest.mark.asyncio
+async def test_confirmed_local_fleet_duplicate_collapses_to_fleet_in_native_search(tmp_path):
+    from datetime import datetime, timezone
+    from uuid import uuid4
+
+    point_id, logical_id = str(uuid4()), str(uuid4())
+    payload = {"record_type": "memory", "memory_id": point_id, "logical_id": logical_id,
+               "revision": 1, "content_hash": "same-content", "content": "Pump P-41 service procedure",
+               "sync_state": "UPLOADED"}
+    seed = QdrantEdgeStore(tmp_path / "fleet", tmp_path / "seed-fleet", embedding_dimension=2)
+    seed.open()
+    point = StoredPoint(point_id, [1.0, 0.0], seed.embed_bm25_document(payload["content"]), payload)
+    seed.upsert_local(point)
+    seed.close()
+
+    store = QdrantEdgeStore(tmp_path / "local", tmp_path / "fleet", embedding_dimension=2)
+    store.open()
+    store.upsert_local(point)
+    db = EdgeStateDB(tmp_path / "state.db")
+    timestamp = datetime.now(timezone.utc).isoformat()
+    with db.transaction() as conn:
+        run = {"run_id": "confirmed", "status": "SYNCHRONIZED", "updated_at": timestamp,
+               "acknowledged": [{"memory_id": point_id, "logical_id": logical_id, "revision": 1,
+                                 "content_hash": "same-content"}]}
+        conn.execute("INSERT INTO sync_checkpoints(checkpoint_id,value,updated_at) VALUES(?,?,?)",
+                     ("sync-run:confirmed", json.dumps(run), timestamp))
+    service = HybridSearchService(store, DeterministicEmbedding(), db)
+
+    results = await service.search("Pump P-41 service procedure", SearchMode.HYBRID)
+
+    assert len(results) == 1
+    assert results[0].point_id == point_id
+    assert results[0].origin is MemoryOrigin.FLEET
+    assert results[0].payload["sync_timestamp"] == timestamp
+    store.close()
+    db.close()

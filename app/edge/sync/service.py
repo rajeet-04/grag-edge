@@ -6,6 +6,7 @@ import json
 from uuid import NAMESPACE_URL, uuid5
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import math
 from typing import Any
 
 from app.edge.memory.models import Sensitivity, SyncPolicy, SyncState
@@ -47,6 +48,95 @@ class SyncService:
 
     def recover_interrupted(self) -> int:
         return self.outbox.recover_interrupted()
+
+    def cleanup_confirmed_local(self, sync_timestamp: float) -> int:
+        """Delete only local points covered by a durable, current fleet acknowledgment.
+
+        The supplied Unix timestamp is a caller cutoff; the synchronization run,
+        outbox/policy rows, active fleet checkpoint, and exact fleet payload must
+        independently agree before a local point is removed.
+        """
+        if not math.isfinite(sync_timestamp):
+            raise ValueError("sync_timestamp must be finite")
+        cutoff = datetime.fromtimestamp(sync_timestamp, timezone.utc)
+        with self.db._lock:
+            checkpoint_row = self.db._connection.execute(
+                "SELECT value FROM sync_checkpoints WHERE checkpoint_id='fleet'"
+            ).fetchone()
+            run_rows = self.db._connection.execute(
+                "SELECT value FROM sync_checkpoints WHERE checkpoint_id LIKE 'sync-run:%'"
+            ).fetchall()
+        if checkpoint_row is None:
+            return 0
+        fleet_checkpoint = json.loads(checkpoint_row["value"])
+        try:
+            checkpoint_time = datetime.fromisoformat(fleet_checkpoint["timestamp"])
+            if checkpoint_time.tzinfo is None:
+                return 0
+        except (KeyError, TypeError, ValueError):
+            return 0
+
+        confirmed: dict[str, dict[str, Any]] = {}
+        for row in run_rows:
+            run = json.loads(row["value"])
+            if run.get("status") != SyncState.SYNCHRONIZED.value:
+                continue
+            try:
+                completed_at = datetime.fromisoformat(run["updated_at"])
+                if completed_at.tzinfo is None or completed_at > cutoff:
+                    continue
+            except (KeyError, TypeError, ValueError):
+                continue
+            if (run.get("fleet_generation") != fleet_checkpoint.get("generation")
+                    or run.get("fleet_refresh_id") != fleet_checkpoint.get("refresh_id")
+                    or checkpoint_time > completed_at):
+                continue
+            for entry in run.get("acknowledged", []):
+                memory_id = entry.get("memory_id")
+                if memory_id and entry.get("content_hash"):
+                    confirmed[memory_id] = {**entry, "completed_at": completed_at}
+
+        delete_local = getattr(self.store, "delete_local", None)
+        if delete_local is None:
+            return 0
+        removed = 0
+        for memory_id, entry in confirmed.items():
+            local = self.store.retrieve(memory_id)
+            fleet = self.store.retrieve_fleet(memory_id)
+            if local is None or fleet is None:
+                continue
+            expected = (entry["memory_id"], entry["logical_id"], entry["revision"], entry["content_hash"])
+            local_payload, fleet_payload = local.payload, fleet.payload
+            local_identity = (local_payload.get("memory_id"), local_payload.get("logical_id"), local_payload.get("revision"), local_payload.get("content_hash"))
+            fleet_identity = (fleet_payload.get("memory_id"), fleet_payload.get("logical_id"), fleet_payload.get("revision"), fleet_payload.get("content_hash"))
+            if local.id != memory_id or fleet.id != memory_id or local_identity != expected or fleet_identity != expected:
+                continue
+            if local_payload.get("sensitivity") == Sensitivity.RESTRICTED.value or fleet_payload.get("sensitivity") == Sensitivity.RESTRICTED.value:
+                continue
+            with self.db._lock:
+                policy = self.db._connection.execute(
+                    "SELECT logical_id,revision,sync_policy,sync_state,sensitivity FROM memory_policy WHERE memory_id=?",
+                    (memory_id,),
+                ).fetchone()
+                outbox = self.db._connection.execute(
+                    "SELECT logical_id,revision,status FROM sync_outbox WHERE memory_id=?",
+                    (memory_id,),
+                ).fetchone()
+                conflict = self.db._connection.execute(
+                    "SELECT 1 FROM conflicts WHERE logical_id=? AND status='OPEN' LIMIT 1",
+                    (entry["logical_id"],),
+                ).fetchone()
+            if (policy is None or outbox is None or conflict is not None
+                    or policy["logical_id"] != entry["logical_id"] or policy["revision"] != entry["revision"]
+                    or policy["sync_state"] != SyncState.SYNCHRONIZED.value
+                    or policy["sync_policy"] != SyncPolicy.AUTO.value
+                    or policy["sensitivity"] == Sensitivity.RESTRICTED.value
+                    or outbox["logical_id"] != entry["logical_id"] or outbox["revision"] != entry["revision"]
+                    or outbox["status"] != SyncState.SYNCHRONIZED.value):
+                continue
+            delete_local(memory_id)
+            removed += 1
+        return removed
 
     def _event(self, kind: str, message: str, memory_id: str | None = None, metadata: dict | None = None) -> None:
         self.activity.append(ActivityEvent(event_type=kind, device_id=self.device_id, memory_id=memory_id,

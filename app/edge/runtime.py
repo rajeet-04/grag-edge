@@ -28,7 +28,7 @@ class EdgeRuntime:
         self.state_db = EdgeStateDB(state_path or settings.edge_state_path)
         self.outbox = SyncOutbox(self.state_db)
         self.activity = ActivityLog(self.state_db)
-        self.search = HybridSearchService(store, self.embedding_service)
+        self.search = HybridSearchService(store, self.embedding_service, self.state_db)
         self.memories = MemoryService(store, self.embedding_service, self.state_db)
         self.device_id = settings.device_id
         self.connectivity_interval_seconds = settings.connectivity_interval_seconds

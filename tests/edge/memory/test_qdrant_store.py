@@ -34,6 +34,18 @@ def test_point_persists_across_store_reopen(tmp_path: Path):
     reopened.close()
 
 
+def test_confirmed_cleanup_can_delete_exact_local_point(tmp_path: Path):
+    point = StoredPoint(str(uuid4()), [0.0, 0.0, 0.0, 1.0], None, {"revision": 1})
+    store = QdrantEdgeStore(tmp_path / "local", tmp_path / "fleet", embedding_dimension=4)
+    store.open()
+    store.upsert_local(point)
+
+    store.delete_local(point.id)
+
+    assert store.retrieve_local(point.id) is None
+    store.close()
+
+
 def test_dense_dimension_mismatch_is_rejected_without_mutating_shard(tmp_path: Path):
     store = QdrantEdgeStore(tmp_path / "local", tmp_path / "fleet", embedding_dimension=4)
     store.open()

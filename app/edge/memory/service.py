@@ -133,10 +133,12 @@ class MemoryService:
         return self._overlay(MemoryRecord.model_validate(point.payload)) if point and point.payload.get("record_type") == "memory" else None
 
     def history(self, logical_id: str) -> list[MemoryRecord]:
-        return sorted((r for r in self._records() if r.logical_id == logical_id), key=lambda r: r.revision)
+        return sorted((r for r in self._all_records() if r.logical_id == logical_id), key=lambda r: (r.revision, r.memory_id))
 
     def current(self, logical_id: str) -> MemoryRecord | None:
-        records = self.history(logical_id)
+        # Mutations are based only on the writable local branch. Fleet-only
+        # revisions are copied into a new local revision by explicit conflict resolution.
+        records = [record for record in self._records() if record.logical_id == logical_id]
         return max(records, key=lambda r: r.revision) if records and not max(records, key=lambda r: r.revision).is_deleted else None
 
     async def tombstone(self, logical_id: str) -> MemoryRecord:

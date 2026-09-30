@@ -226,6 +226,16 @@ class QdrantEdgeStore:
         local = self._require_open()
         return self._retrieve(local, point_id)
 
+    def delete_local(self, point_id: str) -> None:
+        """Remove one verified local point; fleet data is never writable here."""
+        local = self._require_open()
+        normalized_id = self._point_id(point_id)
+        try:
+            local.update(UpdateOperation.delete_points([normalized_id]))
+            local.flush()
+        except Exception as exc:
+            raise RuntimeError(f"Could not delete local point {normalized_id}") from exc
+
     def retrieve_fleet(self, point_id: str) -> StoredPoint | None:
         self._require_open()
         with self._fleet_lock:

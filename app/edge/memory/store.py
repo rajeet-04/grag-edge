@@ -30,6 +30,10 @@ class EdgeMemoryStore(Protocol):
         """Return a point by identifier, if present."""
         ...
 
+    def delete_local(self, point_id: str) -> None:
+        """Delete one local point after an acknowledged synchronization boundary."""
+        ...
+
     def list_points(self) -> list[StoredPoint]:
         """Return persisted local points for history and current-revision checks."""
         ...
