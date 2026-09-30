@@ -126,10 +126,10 @@ async def health_check() -> HealthStatus:
     Returns status of:
     - Neo4j connectivity
     - Ollama API availability
-    - ChromaDB path accessibility
+    - Qdrant Edge path accessibility
     """
     services = {
-        "chromadb": {
+        "qdrant_edge": {
             "status": "unknown",
             "accessible": False,
         },
@@ -146,18 +146,18 @@ async def health_check() -> HealthStatus:
     overall_status = "healthy"
 
     try:
-        chromadb_path = Path(settings.chromadb_path)
-        if chromadb_path.exists() or chromadb_path.parent.exists():
-            services["chromadb"]["status"] = "ok"
-            services["chromadb"]["accessible"] = True
+        edge_path = Path(settings.qdrant_edge_path)
+        if edge_path.exists() or edge_path.parent.exists():
+            services["qdrant_edge"]["status"] = "ok"
+            services["qdrant_edge"]["accessible"] = True
         else:
-            services["chromadb"]["status"] = "warning"
-            services["chromadb"]["accessible"] = False
+            services["qdrant_edge"]["status"] = "warning"
+            services["qdrant_edge"]["accessible"] = False
     except Exception as e:
-        services["chromadb"]["status"] = "error"
-        services["chromadb"]["accessible"] = False
+        services["qdrant_edge"]["status"] = "error"
+        services["qdrant_edge"]["accessible"] = False
         overall_status = "degraded"
-        logger.warning("health.chromadb.error", error=str(e))
+        logger.warning("health.qdrant_edge.error", error=str(e))
 
     try:
         import httpx

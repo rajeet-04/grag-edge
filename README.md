@@ -4,7 +4,7 @@
 
 GRAG AI is a production-ready hybrid retrieval-augmented generation backend with a dual-memory architecture:
 - **Knowledge Representation (KR)**: Neo4j temporal graph for factual knowledge
-- **Knowledge Base (KB)**: ChromaDB for episodic + semantic user memory
+- **Knowledge Base (KB)**: Qdrant Edge local hybrid memory (offline-first, LOCAL/FLEET provenance)
 - **Explainable AI (xAI)**: Traceable reasoning paths with Mermaid visualization
 
 Integrates with OpenWebUI via OpenAI-compatible API and uses Ollama for local LLM inference.
@@ -38,8 +38,7 @@ app/
 │   └── explanation_agent.py # xAI output
 ├── database/
 │   ├── neo4j_client.py # Neo4j operations
-│   └── chroma_client.py # ChromaDB vector store
-├── memory/             # KB: short-term, episodic, semantic
+│   └── (Neo4j only; edge memory lives in app/edge/)
 ├── retrieval/          # Fallback + ranking
 └── schemas/            # Pydantic models
 ```
@@ -75,13 +74,16 @@ NEO4J_USER=neo4j
 NEO4J_PASSWORD=your_password
 
 # Required by current query and entity/relation extraction paths
-# P0 preserves these legacy cloud calls; local routing remains a spec conformance gap.
+# Used only when LLM_USE_CLOUD=true (explicit opt-in).
 OLLAMA_CLOUD_URL=https://ollama.com
 OLLAMA_CLOUD_MODEL=minimax-m2.7:cloud
 OLLAMA_CLOUD_API_KEY=your_cloud_api_key_here
 
-# Required: ChromaDB
-CHROMADB_PATH=./data/chromadb
+# Required: Qdrant Edge local memory
+QDRANT_EDGE_PATH=./data/qdrant-edge
+
+# Optional: cloud LLM opt-in (default false; local Ollama is used)
+LLM_USE_CLOUD=false
 
 # Optional: API Authentication (blank = no auth)
 API_KEY=

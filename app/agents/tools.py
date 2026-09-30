@@ -2,8 +2,7 @@
 
 Provides tools for:
 - Neo4j knowledge graph search (KR layer)
-- ChromaDB episodic memory search (KB layer)
-- ChromaDB semantic preference search (KB layer)
+- Qdrant Edge memory search (offline KB layer)
 """
 
 import json
@@ -14,7 +13,6 @@ import structlog
 from langchain_core.tools import tool
 
 from app.database.neo4j_client import get_neo4j_client
-from app.database.chroma_client import get_chromadb_client
 
 logger = structlog.get_logger()
 
@@ -120,63 +118,49 @@ def neo4j_search(query: str, temporal_filters: str = "") -> str:
 
 
 @tool
-def chroma_episodic_search(query: str, limit: int = 5) -> str:
-    """Search episodic memory in ChromaDB.
+def edge_memory_search(query: str, limit: int = 5) -> str:
+    """Search local Qdrant Edge memory (LOCAL and FLEET origins).
 
-    Use this to find past interaction summaries, session history,
-    and conversational context. Episodic memories capture what happened
-    in previous sessions with temporal metadata.
+    Use this to find robot observations, procedures, incidents and operator
+    notes stored offline on this device. Every result carries its origin,
+    revision and source provenance.
 
     Args:
-        query: Natural language query to search episodic memories
+        query: Natural language query
         limit: Maximum number of results to return (default 5)
 
     Returns:
-        JSON string of matching episodic memories with metadata
+        JSON string of matching memories with provenance and scores
     """
     import asyncio
 
     async def _run() -> str:
         try:
-            client = get_chromadb_client()
-            collection = client.get_episodic_collection()
-            embedding_service = client._embedding_service
+            from app.edge.memory.hybrid_search import SearchMode
+            from app.edge.registry import get_edge_runtime
 
-            embedding = await embedding_service.embed_text(query)
-
-            results = collection.query(
-                query_embeddings=[embedding],
-                n_results=limit,
-                include=["documents", "metadatas", "distances"],
+            runtime = get_edge_runtime()
+            if runtime is None:
+                return json.dumps({"error": "edge runtime unavailable"})
+            hits = await runtime.search.search(query, SearchMode.HYBRID, limit)
+            return json.dumps(
+                [
+                    {
+                        "id": h.point_id,
+                        "content": h.payload.get("content", ""),
+                        "origin": h.origin.value,
+                        "revision": h.payload.get("revision"),
+                        "device_id": h.payload.get("device_id"),
+                        "source_type": h.payload.get("source_type"),
+                        "source_id": h.payload.get("source_id"),
+                        "score": h.score,
+                    }
+                    for h in hits
+                ],
+                default=str,
             )
-
-            episodes = []
-            if results["ids"] and results["ids"][0]:
-                for i, ep_id in enumerate(results["ids"][0]):
-                    metadata = results["metadatas"][0][i]
-                    episodes.append(
-                        {
-                            "id": ep_id,
-                            "content": results["documents"][0][i],
-                            "summary": metadata.get("summary", ""),
-                            "session_id": metadata.get("session_id", ""),
-                            "user_id": metadata.get("user_id", ""),
-                            "timestamp": metadata.get("timestamp", ""),
-                            "distance": results["distances"][0][i]
-                            if "distances" in results
-                            else None,
-                        }
-                    )
-
-            logger.info(
-                "chroma_episodic_search.executed",
-                query=query[:100],
-                result_count=len(episodes),
-            )
-            return json.dumps(episodes, default=str)
-
         except Exception as e:
-            logger.error("chroma_episodic_search.error", error=str(e))
+            logger.error("edge_memory_search.error", error=str(e))
             return json.dumps({"error": str(e)})
 
     try:
@@ -192,77 +176,4 @@ def chroma_episodic_search(query: str, limit: int = 5) -> str:
     return asyncio.run(_run())
 
 
-@tool
-def chroma_semantic_search(query: str, limit: int = 3) -> str:
-    """Search semantic preferences in ChromaDB.
-
-    Use this to find user preferences, communication styles,
-    and learned behavioral patterns. Semantic memory captures
-    long-term user traits and preferences.
-
-    Args:
-        query: Natural language query to search semantic preferences
-        limit: Maximum number of results to return (default 3)
-
-    Returns:
-        JSON string of matching semantic preferences with metadata
-    """
-    import asyncio
-
-    async def _run() -> str:
-        try:
-            client = get_chromadb_client()
-            collection = client.get_semantic_collection()
-            embedding_service = client._embedding_service
-
-            embedding = await embedding_service.embed_text(query)
-
-            results = collection.query(
-                query_embeddings=[embedding],
-                n_results=limit,
-                include=["documents", "metadatas", "distances"],
-            )
-
-            preferences = []
-            if results["ids"] and results["ids"][0]:
-                for i, pref_id in enumerate(results["ids"][0]):
-                    metadata = results["metadatas"][0][i]
-                    preferences.append(
-                        {
-                            "id": pref_id,
-                            "content": results["documents"][0][i],
-                            "preference_type": metadata.get("preference_type", ""),
-                            "source": metadata.get("source", ""),
-                            "confidence": metadata.get("confidence", 0.0),
-                            "distance": results["distances"][0][i]
-                            if "distances" in results
-                            else None,
-                        }
-                    )
-
-            logger.info(
-                "chroma_semantic_search.executed",
-                query=query[:100],
-                result_count=len(preferences),
-            )
-            return json.dumps(preferences, default=str)
-
-        except Exception as e:
-            logger.error("chroma_semantic_search.error", error=str(e))
-            return json.dumps({"error": str(e)})
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop and loop.is_running():
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            return pool.submit(asyncio.run, _run()).result()
-    return asyncio.run(_run())
-
-
-# Tool registry for LangGraph agent binding
-AGENT_TOOLS = [neo4j_search, chroma_episodic_search, chroma_semantic_search]
+AGENT_TOOLS = [neo4j_search, edge_memory_search]

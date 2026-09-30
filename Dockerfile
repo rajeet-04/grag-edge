@@ -21,8 +21,7 @@ COPY app/ ./app/
 COPY env.example ./.env.example
 
 # Create data directories
-RUN mkdir -p /data/chromadb && \
-    mkdir -p /data/logs
+RUN mkdir -p /data/logs
 
 # Expose port
 EXPOSE 8000

@@ -3,7 +3,7 @@
 Implements the 5-agent orchestration pattern:
 1. Ingestion Agent — text → entities + relations
 2. Query Agent — natural language → Cypher
-3. KR/KB Search — parallel Neo4j + ChromaDB retrieval
+3. KR/Edge Search — Qdrant Edge memory plus optional Neo4j enrichment
 4. Context Builder — merge KR + KB context with token budget
 5. Explanation Agent — xAI reasoning output with Mermaid
 
@@ -19,8 +19,7 @@ from app.agents.query_agent import query_agent_node
 from app.agents.state import GraphState, create_initial_state, get_trace
 from app.agents.tools import (
     AGENT_TOOLS,
-    chroma_episodic_search,
-    chroma_semantic_search,
+    edge_memory_search,
     neo4j_search,
 )
 
@@ -42,6 +41,5 @@ __all__ = [
     # Tools
     "AGENT_TOOLS",
     "neo4j_search",
-    "chroma_episodic_search",
-    "chroma_semantic_search",
+    "edge_memory_search",
 ]

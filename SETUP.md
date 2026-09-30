@@ -5,7 +5,7 @@
 ### Hardware Requirements
 - **VRAM**: 8GB (for LLM models)
 - **RAM**: 16GB
-- **Disk**: 10GB+ for Neo4j, ChromaDB, models
+- **Disk**: 10GB+ for Neo4j, Qdrant Edge, models
 
 ### Software Requirements
 - Python 3.12+

@@ -673,9 +673,7 @@ class TestBatchProcessing:
                     "done": True,
                 }
 
-            mock_ollama.return_value.chat = AsyncMock(
-                side_effect=[mock_chat() for _ in documents]
-            )
+            mock_ollama.return_value.chat = AsyncMock(side_effect=mock_chat)
 
             entity_service = EntityExtractionService()
             relation_service = RelationExtractionService()

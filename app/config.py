@@ -62,9 +62,6 @@ class Settings(BaseSettings):
     connectivity_interval_seconds: float = Field(default=5.0, alias="CONNECTIVITY_INTERVAL_SECONDS")
     sync_interval_seconds: float = Field(default=2.0, alias="SYNC_INTERVAL_SECONDS")
 
-    # ChromaDB Configuration
-    chromadb_path: Path = Field(default=Path("./data/chromadb"), alias="CHROMADB_PATH")
-
     # Application Settings
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     environment: str = Field(default="development", alias="ENVIRONMENT")
@@ -83,7 +80,6 @@ class Settings(BaseSettings):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.chromadb_path = Path(self.chromadb_path)
         self.qdrant_edge_path = Path(self.qdrant_edge_path)
         self.edge_state_path = Path(self.edge_state_path)
 
