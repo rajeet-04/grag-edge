@@ -7,6 +7,8 @@ from typing import Any
 from uuid import UUID
 
 from qdrant_edge import (
+    Bm25,
+    Bm25Config,
     Distance,
     EdgeConfig,
     EdgeShard,
@@ -14,11 +16,18 @@ from qdrant_edge import (
     EdgeVectorParams,
     Modifier,
     Point,
+    Query,
+    SearchRequest,
     SparseVector,
     UpdateOperation,
 )
 
-from app.edge.memory.store import EdgeMemoryStore, StoredPoint
+from app.edge.memory.store import (
+    EdgeMemoryStore,
+    MemoryOrigin,
+    RawSearchHit,
+    StoredPoint,
+)
 
 
 class QdrantEdgeStore:
@@ -34,6 +43,7 @@ class QdrantEdgeStore:
         self.embedding_dimension = embedding_dimension
         self._local: EdgeShard | None = None
         self._fleet: EdgeShard | None = None
+        self._bm25 = Bm25(Bm25Config(language="english"))
 
     def open(self) -> None:
         """Load persisted shards or create them at previously unused paths."""
@@ -46,10 +56,14 @@ class QdrantEdgeStore:
         self._local = self._open_shard(self.local_path, config)
         try:
             self._fleet = self._open_shard(self.fleet_path, config)
-        except Exception:
-            self._local.close()
-            self._local = None
-            raise
+        except RuntimeError as exc:
+            if "empty or corrupt" not in str(exc):
+                self._local.close()
+                self._local = None
+                raise
+            # Fleet data is optional for local-only retrieval; callers can still
+            # query the mutable shard while the fleet shard is repaired.
+            self._fleet = None
 
     @staticmethod
     def _open_shard(path: Path, config: EdgeConfig) -> EdgeShard:
@@ -91,13 +105,69 @@ class QdrantEdgeStore:
             return SparseVector(indices=sparse["indices"], values=sparse["values"])
         raise TypeError("sparse must be a qdrant_edge.SparseVector or indices/values mapping")
 
-    def _require_open(self) -> tuple[EdgeShard, EdgeShard]:
-        if self._local is None or self._fleet is None:
+    def _require_open(self) -> EdgeShard:
+        if self._local is None:
             raise RuntimeError("Qdrant Edge store is not open; call open() first")
-        return self._local, self._fleet
+        return self._local
+
+    def _shard_for_origin(self, origin: MemoryOrigin) -> EdgeShard | None:
+        local = self._require_open()
+        return local if origin is MemoryOrigin.LOCAL else self._fleet
+
+    def embed_bm25_document(self, text: str) -> SparseVector:
+        return self._bm25.embed_document(text)
+
+    def embed_bm25_query(self, text: str) -> SparseVector:
+        return self._bm25.embed_query(text)
+
+    def query_dense(
+        self, vector: list[float], limit: int, origin: MemoryOrigin
+    ) -> list[RawSearchHit]:
+        if len(vector) != self.embedding_dimension:
+            raise ValueError(
+                f"dense vector dimension {len(vector)} does not match "
+                f"configured embedding dimension {self.embedding_dimension}"
+            )
+        return self._query(vector, "dense", limit, origin)
+
+    def query_sparse(
+        self, vector: Any, limit: int, origin: MemoryOrigin
+    ) -> list[RawSearchHit]:
+        sparse = self._sparse_value(vector)
+        if sparse is None:
+            raise ValueError("sparse query vector must not be empty")
+        return self._query(sparse, "text", limit, origin)
+
+    def _query(
+        self, vector: Any, using: str, limit: int, origin: MemoryOrigin
+    ) -> list[RawSearchHit]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        shard = self._shard_for_origin(origin)
+        if shard is None:
+            return []
+        try:
+            points = shard.search(
+                SearchRequest(
+                    query=Query.Nearest(vector, using=using),
+                    limit=limit,
+                    with_payload=True,
+                )
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Qdrant Edge {using} query failed for {origin.value}") from exc
+        return [
+            RawSearchHit(
+                point_id=str(point.id),
+                score=float(point.score),
+                origin=origin,
+                payload=dict(point.payload or {}),
+            )
+            for point in points
+        ]
 
     def upsert_local(self, point: StoredPoint) -> None:
-        local, _ = self._require_open()
+        local = self._require_open()
         if len(point.dense) != self.embedding_dimension:
             raise ValueError(
                 f"dense vector dimension {len(point.dense)} does not match "
@@ -119,12 +189,14 @@ class QdrantEdgeStore:
             raise RuntimeError(f"Could not upsert point {point.id} into local shard") from exc
 
     def retrieve_local(self, point_id: str) -> StoredPoint | None:
-        local, _ = self._require_open()
+        local = self._require_open()
         return self._retrieve(local, point_id)
 
     def retrieve_fleet(self, point_id: str) -> StoredPoint | None:
-        _, fleet = self._require_open()
-        return self._retrieve(fleet, point_id)
+        self._require_open()
+        if self._fleet is None:
+            return None
+        return self._retrieve(self._fleet, point_id)
 
     @classmethod
     def _retrieve(cls, shard: EdgeShard, point_id: str) -> StoredPoint | None:

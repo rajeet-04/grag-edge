@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -31,3 +32,18 @@ class EdgeMemoryStore(Protocol):
     def close(self) -> None:
         """Flush and release store resources."""
         ...
+
+
+class MemoryOrigin(str, Enum):
+    LOCAL = "LOCAL"
+    FLEET = "FLEET"
+
+
+@dataclass(frozen=True, slots=True)
+class RawSearchHit:
+    """Backend-neutral result from one vector search and one shard."""
+
+    point_id: str
+    score: float
+    origin: MemoryOrigin
+    payload: dict[str, Any]
