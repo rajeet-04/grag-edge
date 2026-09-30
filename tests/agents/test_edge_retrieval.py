@@ -92,3 +92,23 @@ async def test_search_failure_degrades_without_raising():
     out = await edge_memory_search_node(create_initial_state("q", "s"))
     assert out["edge_memory_hits"] == []
     assert any("degraded" in t for t in out["agent_trace"])
+
+
+def test_query_agent_error_with_edge_hits_does_not_route_to_error_handler():
+    from app.agents.graph import _route_after_context_builder, _route_after_explanation
+    from langgraph.graph import END
+
+    state = create_initial_state("q", "s")
+    state["errors"] = [{"agent": "query_agent", "error": "llm down"}]
+    state["edge_memory_hits"] = [{"id": "a", "content": "Pump P-41 is hot"}]
+    assert _route_after_context_builder(state) == "explanation"
+    assert _route_after_explanation(state) == END
+
+
+def test_errors_without_edge_hits_still_fail():
+    from app.agents.graph import _route_after_context_builder, _route_after_explanation
+
+    state = create_initial_state("q", "s")
+    state["errors"] = [{"agent": "query_agent", "error": "llm down"}]
+    assert _route_after_context_builder(state) == "fail"
+    assert _route_after_explanation(state) == "fail"

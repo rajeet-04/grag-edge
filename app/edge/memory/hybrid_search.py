@@ -43,7 +43,13 @@ class HybridSearchService:
         store: SearchableEdgeMemoryStore,
         embedding_service: _EmbeddingService | None = None,
         state_db: Any | None = None,
+        min_dense_score: float | None = None,
     ) -> None:
+        if min_dense_score is None:
+            from app.config import get_settings
+
+            min_dense_score = get_settings().edge_min_dense_score
+        self._min_dense_score = min_dense_score
         self._store = store
         self._embedding_service = embedding_service or get_embedding_service()
         self._bm25 = EdgeBm25Indexer(store)
@@ -107,6 +113,9 @@ class HybridSearchService:
         }
         return visible, len(points)
 
+    def _relevant_dense(self, hits: list[RawSearchHit]) -> list[RawSearchHit]:
+        return [hit for hit in hits if hit.score > self._min_dense_score]
+
     @staticmethod
     def _visible_hits(hits: list[RawSearchHit], visible_ids: set[str] | None) -> list[RawSearchHit]:
         if visible_ids is None:
@@ -132,7 +141,7 @@ class HybridSearchService:
                 for origin in origins
                 for hit in self._store.query_dense(vector, candidate_limit, origin)
             ]
-            hits = self._visible_hits(hits, visible_ids)
+            hits = self._relevant_dense(self._visible_hits(hits, visible_ids))
             return dedupe_hits(self._confirmed_hits([
                 MemoryHit(hit.point_id, hit.score, hit.origin, hit.score, None, hit.payload)
                 for hit in self._ranked_unique(hits)
@@ -145,7 +154,7 @@ class HybridSearchService:
                 for origin in origins
                 for hit in self._store.query_sparse(vector, candidate_limit, origin)
             ]
-            hits = self._visible_hits(hits, visible_ids)
+            hits = [h for h in self._visible_hits(hits, visible_ids) if h.score > 0]
             return dedupe_hits(self._confirmed_hits([
                 MemoryHit(hit.point_id, hit.score, hit.origin, None, hit.score, hit.payload)
                 for hit in self._ranked_unique(hits)
@@ -163,7 +172,7 @@ class HybridSearchService:
                 for hit in self._store.query_dense(dense_vector, candidate_limit, origin)
             ]
         )
-        dense_hits = self._ranked_unique(self._visible_hits(dense_hits, visible_ids))
+        dense_hits = self._relevant_dense(self._ranked_unique(self._visible_hits(dense_hits, visible_ids)))
         sparse_hits = self._ranked_unique(
             [
                 hit
@@ -171,7 +180,7 @@ class HybridSearchService:
                 for hit in self._store.query_sparse(sparse_vector, candidate_limit, origin)
             ]
         )
-        sparse_hits = self._ranked_unique(self._visible_hits(sparse_hits, visible_ids))
+        sparse_hits = [h for h in self._ranked_unique(self._visible_hits(sparse_hits, visible_ids)) if h.score > 0]
         return dedupe_hits(self._confirmed_hits(self._fuse(dense_hits, sparse_hits)))[:limit]
 
     @staticmethod

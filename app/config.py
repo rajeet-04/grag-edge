@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     )
     embedding_dimension: int = Field(default=768, alias="EDGE_EMBEDDING_DIMENSION")
     edge_state_path: Path = Field(default=Path("./data/edge-state.db"), alias="EDGE_STATE_PATH")
+    # Dense hits at or below this cosine score with no keyword match are not relevant.
+    edge_min_dense_score: float = Field(default=0.3, alias="EDGE_MIN_DENSE_SCORE")
 
     # Qdrant Server fleet synchronization
     qdrant_url: str = Field(default="http://localhost:6333", alias="QDRANT_URL")

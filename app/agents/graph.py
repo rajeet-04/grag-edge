@@ -267,14 +267,18 @@ def _route_after_query(state: GraphState) -> list[str]:
     return ["edge_memory_search"]
 
 
+def _blocking_errors(state: GraphState) -> bool:
+    """Errors block the answer only when there is no edge evidence to answer from."""
+    return bool(state.get("errors", [])) and not state.get("edge_memory_hits")
+
+
 def _route_after_context_builder(state: GraphState) -> str:
     """Route after Context Builder.
 
     Fail fast to error handler when any upstream error exists to avoid
     unbounded retry loops in low-memory runtime environments.
     """
-    errors = state.get("errors", [])
-    if errors:
+    if _blocking_errors(state):
         return "fail"
     return "explanation"
 
@@ -284,8 +288,7 @@ def _route_after_explanation(state: GraphState) -> str:
 
     Fail fast to error handler when errors are present.
     """
-    errors = state.get("errors", [])
-    if errors:
+    if _blocking_errors(state):
         return "fail"
     return END
 

@@ -172,3 +172,22 @@ async def test_confirmed_local_fleet_duplicate_collapses_to_fleet_in_native_sear
     assert results[0].payload["sync_timestamp"] == timestamp
     store.close()
     db.close()
+
+
+@pytest.mark.asyncio
+async def test_zero_relevance_hits_are_not_returned(tmp_path):
+    store, service = await make_service(tmp_path)
+    add_point(store, "Conveyor C-19 belt tension is stable", [0.0, 1.0])
+    # Query embeds to [1, 0]: orthogonal (zero dense relevance), no shared keyword.
+    assert await service.search("pump zzzunmatched", SearchMode.HYBRID) == []
+    assert await service.search("pump zzzunmatched", SearchMode.SEMANTIC) == []
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_keyword_only_match_survives_weak_dense_score(tmp_path):
+    store, service = await make_service(tmp_path)
+    target = add_point(store, "Valve V-77 tag", [0.0, 1.0])
+    results = await service.search("pump V-77", SearchMode.HYBRID)
+    assert [r.point_id for r in results] == [target.id]
+    store.close()
