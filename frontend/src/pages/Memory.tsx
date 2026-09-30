@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { MemoryFilters, MemoryRecord } from "../api/types";
 import MemoryDetail from "../components/MemoryDetail";
+import { SkeletonCards } from "../components/Skeleton";
+import { useEntrance } from "../motion";
 
 const SYNC_STATES = ["", "LOCAL_DIRTY", "LOCAL_ONLY", "AWAITING_APPROVAL", "QUEUED", "UPLOADING", "UPLOADED", "RETRY_WAIT", "SNAPSHOT_PENDING", "SYNCHRONIZED"];
 const TYPES = ["", "observation", "procedure", "incident", "operator_note", "learned_fact"];
@@ -13,6 +15,8 @@ export default function Memory() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<MemoryRecord | null>(null);
   const opener = useRef<HTMLElement | null>(null);
+  const list = useRef<HTMLDivElement>(null);
+  useEntrance(list, ".card", rows);
 
   const load = useCallback(async (filters: MemoryFilters) => {
     try {
@@ -34,9 +38,9 @@ export default function Memory() {
 
   return (
     <div>
-      <h2>Memory</h2>
+      <h2 className="page-title">Memory</h2>
       <div className="panel">
-        <div className="row">
+        <div className="row filters">
           <label>Source <input value={draft.source ?? ""} onChange={set("source")} /></label>
           <label>Type <select value={draft.memory_type ?? ""} onChange={set("memory_type")}>{TYPES.map((t) => <option key={t} value={t}>{t || "any"}</option>)}</select></label>
           <label>Sync state <select value={draft.sync_state ?? ""} onChange={set("sync_state")}>{SYNC_STATES.map((t) => <option key={t} value={t}>{t || "any"}</option>)}</select></label>
@@ -45,23 +49,26 @@ export default function Memory() {
           <label>Tag <input value={draft.tag ?? ""} onChange={set("tag")} /></label>
           <label>From <input type="datetime-local" value={draft.from_time ?? ""} onChange={set("from_time")} /></label>
           <label>To <input type="datetime-local" value={draft.to_time ?? ""} onChange={set("to_time")} /></label>
-          <button onClick={apply}>Apply filters</button>
+          <button className="primary" onClick={apply}>Apply filters</button>
         </div>
       </div>
       {error && <div className="banner error" role="alert">Could not load memories: {error}</div>}
       {selected && <MemoryDetail record={selected} onClose={() => { setSelected(null); opener.current?.focus(); }} />}
       {rows && rows.length === 0 && <p className="empty">No memories match these filters. Clear a filter, or wait for new observations to be recorded.</p>}
+      {rows === null && !error && <SkeletonCards count={4} h={92} />}
+      <div ref={list}>
       {rows?.map((r) => (
         <div key={r.memory_id} className="card" data-testid="memory-row" tabIndex={0} role="button"
           onClick={(e) => { opener.current = e.currentTarget; open(r); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); opener.current = e.currentTarget; open(r); } }}>
           <div className="row">
-            <span className="badge">{r.sync_state}</span><span className="badge">{r.memory_type}</span>
+            <span className="badge" data-sync={r.sync_state}>{r.sync_state}</span><span className="badge">{r.memory_type}</span>
             <span className="badge">rev {r.revision}</span><span className="badge">{r.device_id}</span>
           </div>
           <div className="content">{r.content}</div>
-          <div className="mono" style={{ color: "var(--muted)" }}>{r.memory_id}</div>
+          <div className="mono muted">{r.memory_id}</div>
         </div>
       ))}
+      </div>
     </div>
   );
 }

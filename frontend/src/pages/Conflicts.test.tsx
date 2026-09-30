@@ -39,6 +39,10 @@ test("KEEP_LOCAL, ACCEPT_FLEET and MERGE resolution actions", async () => {
   expect(await screen.findByText("local text")).toBeInTheDocument();
   expect(screen.getByText("fleet text")).toBeInTheDocument();
 
+  // each branch shows only the words that differ from the other one
+  expect(screen.getByText("local", { selector: ".diff-seg" })).toBeInTheDocument();
+  expect(screen.getByText("fleet", { selector: ".diff-seg" })).toBeInTheDocument();
+
   await userEvent.click(screen.getByRole("button", { name: "Keep local" }));
   await waitFor(() => expect(api.resolveConflict).toHaveBeenLastCalledWith("c1", "KEEP_LOCAL", undefined));
   await userEvent.click(await screen.findByRole("button", { name: /c1/ }));
