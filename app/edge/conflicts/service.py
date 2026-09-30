@@ -28,7 +28,7 @@ class ConflictRecord(BaseModel):
     logical_id: str
     local_memory_id: str
     fleet_memory_id: str
-    base_revision: int
+    base_revision: int | None
     memory_type: MemoryType
     local_revision: int
     fleet_revision: int
@@ -113,7 +113,9 @@ class ConflictService:
             return None
         if local.memory_type not in _CONFLICT_SENSITIVE:
             return None
-        if local.parent_revision is None or local.parent_revision != fleet.parent_revision:
+        if local.parent_revision != fleet.parent_revision:
+            return None
+        if local.parent_revision is None and local.revision != fleet.revision:
             return None
         if local.content == fleet.content:
             return None

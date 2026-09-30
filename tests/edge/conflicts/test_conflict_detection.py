@@ -113,6 +113,20 @@ def test_identical_revision_content_is_not_a_conflict(tmp_path):
     db.close()
 
 
+def test_same_logical_root_revision_with_different_sensitive_content_conflicts(tmp_path):
+    db, conflicts = service(tmp_path)
+
+    result = conflicts.detect(
+        memory(memory_id="local-root", content="Local starting procedure", revision=1, parent_revision=None),
+        memory(memory_id="fleet-root", content="Fleet starting procedure", revision=1, parent_revision=None),
+    )
+
+    assert result is not None
+    assert result.base_revision is None
+    assert result.local_revision == result.fleet_revision == 1
+    db.close()
+
+
 def test_different_logical_ids_or_different_bases_are_not_conflicts(tmp_path):
     db, conflicts = service(tmp_path)
     local = memory(memory_id="local-v2", content="local procedure")
