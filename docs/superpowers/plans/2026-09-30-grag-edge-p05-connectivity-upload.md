@@ -78,20 +78,26 @@
 - Create: `app/edge/sync/service.py`
 - Modify: `app/edge/api/sync.py`
 - Create: `app/edge/api/operations.py`
+- Modify: `app/edge/runtime.py`
 - Modify: `app/main.py`
 - Test: `tests/edge/sync/test_sync_service.py`
 - Test: `tests/edge/api/test_edge_status.py`
+- Test: `tests/edge/api/test_activity_stream.py`
 
 **Interfaces:**
 - Produce: `SyncService.run_once() -> SyncRunResult`.
-- Produce: `GET /api/v1/edge/sync/status`, `POST /api/v1/edge/sync/run`, `GET /api/v1/edge/status`.
+- Produce: `GET /api/v1/edge/sync/status`, `POST /api/v1/edge/sync/run`, `GET /api/v1/edge/status`, `GET /api/v1/edge/activity`, `GET /api/v1/edge/stats`, and SSE `GET /api/v1/edge/events`.
+- `EdgeRuntime` now owns `EdgeStateDB`, `ActivityLog`, `ConnectivityMonitor`, and `SyncService`; FastAPI lifespan starts one connectivity task and one sync-worker task and cancels/awaits both on shutdown.
+- SSE resumes from `Last-Event-ID` when supplied and emits heartbeat comments without duplicating persisted events.
+- Initial stats expose local/fleet memory counts, pending sync, last sync, sync success/failure, search latency if available, and connectivity; conflict count is added in P7.
 - State transitions: QUEUED → UPLOADING → UPLOADED; failures → RETRY_WAIT → QUEUED with bounded exponential backoff.
+- Emit `SYNC_STARTED`, `SYNC_RETRY`, and `SYNC_COMPLETED` activity events at their owning transitions.
 
-- [ ] **Step 1: Write worker/API tests**
-  Assert local APIs remain usable while server client fails; restart of an UPLOADING item retries safely; manual run triggers work but does not wait for all remote operations.
+- [ ] **Step 1: Write worker/API/lifespan/SSE tests**
+  Assert local APIs remain usable while server client fails; restart of an UPLOADING item retries safely; manual run triggers work but does not wait for all remote operations; app startup is READY with cloud absent; only one monitor/worker pair starts; SSE reconnect via `Last-Event-ID` does not duplicate events.
 - [ ] **Step 2: Run**
   Expected: FAIL.
-- [ ] **Step 3: Implement worker lifecycle and status**
+- [ ] **Step 3: Implement worker lifecycle, runtime startup/shutdown, status/stats/activity APIs, and SSE stream**
 - [ ] **Step 4: Verify**
   Run all sync tests; expected PASS.
 - [ ] **Step 5: Commit**
