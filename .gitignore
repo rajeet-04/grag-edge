@@ -31,3 +31,4 @@ venv.bak/
 htmlcov/
 *.env.*
 .env
+graphify-out/
