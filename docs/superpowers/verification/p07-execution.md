@@ -26,3 +26,7 @@ First review (Claude opus, read-only) of `231a1d6..2347890`: FAIL. Critical C1 (
 
 ## Later resolution
 M6, M7, N3 and N4 were fixed after this phase (see p12-execution.md, second follow-up).
+
+## Update: all deferred items closed
+Supersedes the earlier "Final status" deferral list. Fixed since: N6 adoption of a peer resolution (7eb6928, replacing the 409 block), N7 superseded-conflict closing, N8 resolves_memory_ids validation (same logical id only; fleet peers still share one credential), M6/M7/N3/N4 (e7eb274, tests/edge/sync/test_p07_deferred.py). Verified at 39c37d7: sync+conflicts tests 83 passed, tests/edge+demo+e2e+performance 219 passed, baseline-check exact 10 known failures.
+Remaining limits: a vanished fleet branch does not auto-close its conflict; no independent review after the third.
