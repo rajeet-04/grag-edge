@@ -73,6 +73,19 @@ class ActivityLog:
                 ).fetchall()
         return [self._event(row) for row in rows]
 
+    def after(self, event_id: str | None, limit: int = 100) -> list[ActivityEvent]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        with self.db._lock:
+            sequence = 0
+            if event_id:
+                row = self.db._connection.execute("SELECT sequence FROM activity_events WHERE event_id=?", (event_id,)).fetchone()
+                sequence = row["sequence"] if row else 0
+            rows = self.db._connection.execute(
+                "SELECT * FROM activity_events WHERE sequence>? ORDER BY sequence LIMIT ?", (sequence, limit)
+            ).fetchall()
+        return [self._event(row) for row in rows]
+
     def latest_id(self) -> str | None:
         with self.db._lock:
             row = self.db._connection.execute(

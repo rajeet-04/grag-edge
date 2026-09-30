@@ -14,7 +14,6 @@ services:
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
-      - ./neo4j/neo4j.conf:/conf/neo4j.conf:ro
     environment:
       - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password}
       - NEO4J_PLUGINS=["apoc"]
@@ -77,6 +76,15 @@ services:
     networks:
       - grag-edge-net
 
+  # ── Fleet Qdrant Server (cloud-only; no host port) ────────────────────────
+  qdrant-server:
+    image: qdrant/qdrant:v1.17.1
+    volumes:
+      - qdrant_server_data:/qdrant/storage
+    restart: unless-stopped
+    networks:
+      - grag-cloud-net
+
   # ── GRAG FastAPI Pipeline ─────────────────────────────────────────────────
   fastapi:
     build:
@@ -96,12 +104,11 @@ services:
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3.5:0.8b}
       - QDRANT_EDGE_PATH=/data/qdrant-edge
       - EDGE_EMBEDDING_DIMENSION=768
+      - EDGE_STATE_PATH=/data/edge-state.db
+      - DEVICE_ID=${DEVICE_ID:-robot-edge-001}
       - QDRANT_URL=${QDRANT_URL:-http://qdrant-server:6333}
       - QDRANT_COLLECTION=${QDRANT_COLLECTION:-grag_fleet_memory}
       - QDRANT_API_KEY=${QDRANT_API_KEY:-}
-      - QDRANT_EDGE_PATH=/data/qdrant-edge
-      - EDGE_STATE_PATH=/data/edge-state.db
-      - DEVICE_ID=${DEVICE_ID:-robot-edge-001}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3.5:0.8b}
       - OLLAMA_CLOUD_URL=${OLLAMA_CLOUD_URL:-https://api.ollama.com/v1}
       - OLLAMA_CLOUD_MODEL=${OLLAMA_CLOUD_MODEL:-minimax-m2.7:cloud}
@@ -119,8 +126,6 @@ services:
       - API_KEY=${API_KEY:-}
       - MODEL_NAME=${MODEL_NAME:-grag-pipeline-v1}
     depends_on:
-      neo4j:
-        condition: service_healthy
       ollama:
         condition: service_healthy
     healthcheck:
@@ -145,15 +150,6 @@ services:
     environment:
       # ── Ollama integration (for direct model access in WebUI) ──────────────
       - OLLAMA_BASE_URL=http://ollama:11434
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3.5:0.8b}
-      - QDRANT_EDGE_PATH=/data/qdrant-edge
-      - EDGE_EMBEDDING_DIMENSION=768
-      - QDRANT_URL=${QDRANT_URL:-http://qdrant-server:6333}
-      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-grag_fleet_memory}
-      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
-      - QDRANT_EDGE_PATH=/data/qdrant-edge
-      - EDGE_STATE_PATH=/data/edge-state.db
-      - DEVICE_ID=${DEVICE_ID:-robot-edge-001}
 
       # ── GRAG pipeline as OpenAI-compatible backend ─────────────────────────
       # This is the primary custom backend — GRAG pipeline appears as a model
@@ -199,6 +195,8 @@ volumes:
   neo4j_data:
   neo4j_logs:
   ollama_data:
+    name: grag-edge-ollama-data
+    external: true
   chromadb_data:
   edge_data:
   qdrant_server_data:

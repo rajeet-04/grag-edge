@@ -30,6 +30,7 @@ class EdgeStateDB:
                     status TEXT NOT NULL,
                     retry_count INTEGER NOT NULL DEFAULT 0,
                     last_error TEXT,
+                    next_attempt_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     UNIQUE(logical_id, revision)
@@ -88,6 +89,9 @@ class EdgeStateDB:
                 );
                 """
             )
+            outbox_columns = {row["name"] for row in self._connection.execute("PRAGMA table_info(sync_outbox)")}
+            if "next_attempt_at" not in outbox_columns:
+                self._connection.execute("ALTER TABLE sync_outbox ADD COLUMN next_attempt_at TEXT")
             policy_columns = {row["name"] for row in self._connection.execute("PRAGMA table_info(memory_policy)")}
             if "sensitivity" not in policy_columns:
                 self._connection.execute("ALTER TABLE memory_policy ADD COLUMN sensitivity TEXT NOT NULL DEFAULT 'fleet_safe'")

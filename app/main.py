@@ -55,23 +55,29 @@ async def lifespan(app: FastAPI):
     edge_runtime = EdgeRuntime()
     app.state.edge_runtime = edge_runtime
 
-    from app.database.neo4j_client import get_neo4j_client
-    from app.schemas.graph_schema import init_graph_schema
-
-    neo4j_client = get_neo4j_client()
+    neo4j_client = None
+    await edge_runtime.start()
+    edge_runtime.start_background()
     try:
-        await edge_runtime.start()
-        connected = await neo4j_client.verify_connectivity()
-        if connected:
-            logger.info("app.neo4j.connected")
-            schema_results = await init_graph_schema()
-            logger.info("app.schema.initialized", results=schema_results)
-        else:
-            logger.warning("app.neo4j.not_connected")
+        try:
+            from app.database.neo4j_client import get_neo4j_client
+            from app.schemas.graph_schema import init_graph_schema
+            neo4j_client = get_neo4j_client()
+            connected = await neo4j_client.verify_connectivity()
+            if connected:
+                logger.info("app.neo4j.connected")
+                schema_results = await init_graph_schema()
+                logger.info("app.schema.initialized", results=schema_results)
+            else:
+                logger.warning("app.neo4j.not_connected")
+        except Exception as exc:
+            # Neo4j is optional enrichment and cannot prevent offline edge readiness.
+            logger.warning("app.neo4j.unavailable", error=str(exc))
         yield
     finally:
         try:
-            await neo4j_client.close()
+            if neo4j_client is not None:
+                await neo4j_client.close()
         finally:
             try:
                 await edge_runtime.close()
@@ -103,6 +109,8 @@ from app.edge.api.memories import router as edge_router
 app.include_router(edge_router, prefix="/api/v1")
 from app.edge.api.sync import router as edge_sync_router
 app.include_router(edge_sync_router, prefix="/api/v1")
+from app.edge.api.operations import router as edge_operations_router
+app.include_router(edge_operations_router, prefix="/api/v1")
 
 
 @app.get("/health", response_model=HealthStatus)

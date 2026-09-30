@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import timedelta
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -22,6 +23,7 @@ class OutboxItem:
     status: str
     retry_count: int
     last_error: str | None
+    next_attempt_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -35,7 +37,9 @@ class SyncOutbox:
         return OutboxItem(
             id=row["id"], memory_id=row["memory_id"], logical_id=row["logical_id"],
             revision=row["revision"], status=row["status"], retry_count=row["retry_count"],
-            last_error=row["last_error"], created_at=datetime.fromisoformat(row["created_at"]),
+            last_error=row["last_error"],
+            next_attempt_at=datetime.fromisoformat(row["next_attempt_at"]) if row["next_attempt_at"] else None,
+            created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
 
@@ -84,6 +88,18 @@ class SyncOutbox:
             ).fetchall()
         return [self._item(row) for row in rows]
 
+    def claimable(self, limit: int) -> list[OutboxItem]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        now = _now()
+        with self.db._lock:
+            rows = self.db._connection.execute(
+                "SELECT * FROM sync_outbox WHERE status='QUEUED' OR "
+                "(status='RETRY_WAIT' AND (next_attempt_at IS NULL OR next_attempt_at<=?)) "
+                "ORDER BY created_at,id LIMIT ?", (now, limit),
+            ).fetchall()
+        return [self._item(row) for row in rows]
+
     def get(self, outbox_id: str) -> OutboxItem:
         with self.db._lock:
             return self._item(self._select(self.db._connection, outbox_id))
@@ -115,9 +131,11 @@ class SyncOutbox:
             if row["status"] != "UPLOADING":
                 raise ValueError(f"cannot mark retry from {row['status']}")
             attempt = row["retry_count"] + 1
+            delay = min(300, 2 ** min(attempt, 8))
+            next_attempt = (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat()
             conn.execute(
-                "UPDATE sync_outbox SET status='RETRY_WAIT', retry_count=?, last_error=?, updated_at=? WHERE id=?",
-                (attempt, error, now, outbox_id),
+                "UPDATE sync_outbox SET status='RETRY_WAIT', retry_count=?, last_error=?, next_attempt_at=?, updated_at=? WHERE id=?",
+                (attempt, error, next_attempt, now, outbox_id),
             )
             conn.execute(
                 "INSERT INTO sync_attempts(id,outbox_id,attempt_number,error,created_at) VALUES(?,?,?,?,?)",
@@ -132,5 +150,25 @@ class SyncOutbox:
                 return self._item(row)
             if row["status"] != "UPLOADING":
                 raise ValueError(f"cannot mark uploaded from {row['status']}")
-            conn.execute("UPDATE sync_outbox SET status='UPLOADED', updated_at=? WHERE id=?", (_now(), outbox_id))
+            conn.execute("UPDATE sync_outbox SET status='UPLOADED', next_attempt_at=NULL, updated_at=? WHERE id=?", (_now(), outbox_id))
             return self._item(self._select(conn, outbox_id))
+
+    def cancel(self, outbox_id: str) -> OutboxItem:
+        with self.db.transaction() as conn:
+            row = self._select(conn, outbox_id)
+            if row["status"] in ("UPLOADED", "CANCELLED"):
+                return self._item(row)
+            if row["status"] == "UPLOADING":
+                raise ValueError("cannot cancel an active upload")
+            conn.execute("UPDATE sync_outbox SET status='CANCELLED',next_attempt_at=NULL,updated_at=? WHERE id=?", (_now(), outbox_id))
+            return self._item(self._select(conn, outbox_id))
+
+    def recover_interrupted(self) -> int:
+        now = _now()
+        with self.db.transaction() as conn:
+            rows = conn.execute("SELECT memory_id FROM sync_outbox WHERE status='UPLOADING'").fetchall()
+            conn.execute("UPDATE sync_outbox SET status='QUEUED',last_error='recovered interrupted upload',next_attempt_at=NULL,updated_at=? WHERE status='UPLOADING'", (now,))
+            for row in rows:
+                conn.execute("UPDATE memory_policy SET sync_state='QUEUED',updated_at=? WHERE memory_id=?", (now, row["memory_id"]))
+            conn.execute("UPDATE memory_policy SET sync_state='UPLOADED',updated_at=? WHERE memory_id IN (SELECT memory_id FROM sync_outbox WHERE status='UPLOADED') AND sync_state!='UPLOADED'", (now,))
+        return len(rows)

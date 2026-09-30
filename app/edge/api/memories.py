@@ -1,6 +1,7 @@
 """Memory inspection and hybrid search endpoints."""
 from datetime import datetime
 import sqlite3
+import sqlite3
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from app.edge.memory.models import CreateMemory, MemoryRecord, MemoryType, Importance, SyncState, ReviseMemory
@@ -67,6 +68,8 @@ async def revise_memory(memory_id: str, command: ReviseMemory, request: Request)
         raise HTTPException(409, str(exc)) from exc
     except KeyError as exc:
         raise HTTPException(409, "memory is no longer current") from exc
+    except sqlite3.Error as exc:
+        raise HTTPException(503, "sync state is temporarily unavailable") from exc
 
 @router.post("/search")
 async def search_memories(command: SearchRequest, request: Request):

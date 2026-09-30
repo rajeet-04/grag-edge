@@ -35,3 +35,25 @@ def queue(request: Request, limit: int = 100):
     if limit < 1 or limit > 500:
         raise HTTPException(422, "limit must be between 1 and 500")
     return runtime(request).outbox.pending(limit)
+
+
+@router.get("/status")
+def status(request: Request):
+    edge = runtime(request)
+    items = edge.outbox.all()
+    attempts = edge.state_db._connection.execute("SELECT MAX(created_at) AS latest FROM sync_attempts").fetchone()
+    return {
+        "connectivity": edge.connectivity.current(),
+        "pending": sum(item.status in ("QUEUED", "RETRY_WAIT", "UPLOADING") for item in items),
+        "queued": sum(item.status == "QUEUED" for item in items),
+        "retry_wait": sum(item.status == "RETRY_WAIT" for item in items),
+        "uploading": sum(item.status == "UPLOADING" for item in items),
+        "uploaded": sum(item.status == "UPLOADED" for item in items),
+        "last_attempt_at": attempts["latest"],
+    }
+
+
+@router.post("/run", status_code=202)
+async def run(request: Request):
+    scheduled = runtime(request).trigger_sync()
+    return {"status": "SCHEDULED" if scheduled else "RUNNING"}

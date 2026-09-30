@@ -1,6 +1,7 @@
 """Qdrant Server boundary for idempotent fleet uploads."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
@@ -15,18 +16,25 @@ class CloudHealth(StrEnum):
     ERROR = "ERROR"
 
 
+@dataclass(frozen=True, slots=True)
+class RemoteAck:
+    memory_id: str
+    status: str
+    operation_id: int | str | None = None
+
+
 class QdrantServerClient:
     def __init__(self, url: str, collection: str = "grag_fleet_memory", api_key: str | None = None, client: Any | None = None, timeout: float = 2.0):
         self.collection = collection
         self.timeout = timeout
-        self.client = client or QdrantClient(url=url, api_key=api_key, timeout=timeout)
+        self.client = client or QdrantClient(url=url, api_key=api_key or None, timeout=timeout)
 
     def health(self) -> CloudHealth:
         try:
             self.client.get_collections()
             return CloudHealth.ONLINE
         except Exception as exc:
-            status = getattr(getattr(exc, "response", None), "status_code", None)
+            status = getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
             if (status is not None and 400 <= status < 500) or "401" in str(exc) or "403" in str(exc) or "unauthorized" in str(exc).lower():
                 return CloudHealth.ERROR
             return CloudHealth.OFFLINE
@@ -60,7 +68,9 @@ class QdrantServerClient:
             points=[models.PointStruct(id=point.id, vector=vector, payload=point.payload)],
             wait=True,
         )
-        return result
+        operation = getattr(result, "operation_id", None)
+        status = getattr(result, "status", "completed")
+        return RemoteAck(point.id, str(getattr(status, "value", status)), operation)
 
     def close(self) -> None:
         self.client.close()
