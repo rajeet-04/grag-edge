@@ -116,6 +116,21 @@ def _format_kr_section(
     return "\n".join(parts)
 
 
+def _format_edge_hit(hit: dict[str, Any]) -> str:
+    """One provenance-tagged line for a Qdrant Edge memory hit."""
+    origin = hit.get("origin", "LOCAL")
+    meta = []
+    if hit.get("device_id"):
+        meta.append(f"device {hit['device_id']}")
+    if hit.get("revision") is not None:
+        meta.append(f"rev {hit['revision']}")
+    if hit.get("source_type"):
+        src = hit["source_type"] + (f":{hit['source_id']}" if hit.get("source_id") else "")
+        meta.append(f"source {src}")
+    tag = f"[{origin}" + (f" | {', '.join(meta)}" if meta else "") + "]"
+    return f"- {tag} {hit.get('content', '')}"
+
+
 def _format_episodic_section(
     episodic_memories: list[dict[str, Any]],
 ) -> str:
@@ -201,6 +216,7 @@ def merge_with_budget(
     episodic_memories: list[dict[str, Any]],
     semantic_preferences: list[dict[str, Any]],
     budget: int | None = None,
+    edge_memory_hits: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Merge context by priority, truncating lowest priority first.
@@ -270,6 +286,21 @@ def merge_with_budget(
 
     remaining_budget = max(0, budget - kr_tokens)
 
+    # Step 1b: Edge memory (ranked; lowest-ranked dropped first)
+    edge_parts: list[str] = ["\n## Edge Memory\n"]
+    if edge_memory_hits is not None:
+        for hit in edge_memory_hits:
+            line = _format_edge_hit(hit)
+            tokens = count_tokens(line)
+            if tokens <= remaining_budget:
+                edge_parts.append(line)
+                remaining_budget -= tokens
+            else:
+                truncated.append("edge_memory")
+                break
+        if len(edge_parts) == 1:
+            edge_parts.append("- No relevant local memory found")
+
     # Step 2: Add episodic memories (drop oldest first)
     episodic_parts: list[str] = ["\n## Episodic Memories\n"]
 
@@ -336,7 +367,12 @@ def merge_with_budget(
         semantic_parts.append("- No user preferences available")
 
     # Build final merged context
-    merged = kr_section + "\n".join(episodic_parts) + "\n".join(semantic_parts)
+    merged = (
+        kr_section
+        + ("\n".join(edge_parts) if edge_memory_hits is not None else "")
+        + "\n".join(episodic_parts)
+        + "\n".join(semantic_parts)
+    )
     total_tokens = count_tokens(merged)
     budget_pct = (total_tokens / budget * 100) if budget > 0 else 0
 
@@ -414,9 +450,11 @@ async def context_builder_node(state: dict[str, Any]) -> dict[str, Any]:
     kr_relations = state.get("kr_relations", [])
     episodic = state.get("episodic_memories", [])
     semantic = state.get("semantic_preferences", [])
+    edge_hits = state.get("edge_memory_hits")
 
-    # Skip if no results to process
-    if not kr_entities and not episodic and not semantic:
+    # Skip if no results to process (an executed-but-empty edge search still
+    # yields a grounded "no relevant local memory" context)
+    if not kr_entities and not episodic and not semantic and edge_hits is None:
         existing_trace = state.get("agent_trace", [])
         return {
             **state,
@@ -465,6 +503,7 @@ async def context_builder_node(state: dict[str, Any]) -> dict[str, Any]:
         kr_relations=kr_relations,
         episodic_memories=episodic,
         semantic_preferences=semantic,
+        edge_memory_hits=edge_hits,
     )
 
     existing_trace = state.get("agent_trace", [])

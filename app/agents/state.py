@@ -7,7 +7,7 @@ All agent nodes read from and write to this state dict.
 """
 
 import operator
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 
 
 class GraphState(TypedDict):
@@ -43,7 +43,10 @@ class GraphState(TypedDict):
     kr_relations: list[dict]
     kr_paths: list[dict]
 
-    # ── KB retrieval results (ChromaDB) ────────────────────────
+    # ── Edge memory retrieval (Qdrant Edge) ────────────────────
+    edge_memory_hits: list[dict[str, Any]]
+
+    # ── Legacy KB fields (unused by the edge path) ─────────────
     episodic_memories: list[dict]
     semantic_preferences: list[dict]
 
@@ -99,7 +102,9 @@ def create_initial_state(user_query: str, session_id: str) -> GraphState:
         kr_entities=[],
         kr_relations=[],
         kr_paths=[],
-        # KB retrieval results
+        # Edge memory retrieval
+        edge_memory_hits=[],
+        # Legacy KB fields
         episodic_memories=[],
         semantic_preferences=[],
         # Ranked results

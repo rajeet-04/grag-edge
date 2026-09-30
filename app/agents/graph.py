@@ -4,15 +4,15 @@ Agent Graph Topology:
   1. Ingestion Agent (optional — for document ingestion)
   2. Graph Builder Agent (optional — writes ingested data to Neo4j)
   3. Query Agent → extracts intent + generates Cypher
-  4. Parallel KR (Neo4j) + KB (ChromaDB) search
+  4. Parallel KR (Neo4j, optional) + Qdrant Edge memory search
   5. Context Builder → merges with token budget enforcement
   6. Explanation Agent → generates xAI output with Mermaid
 
 Flow (document ingestion):
-  START → Ingestion → Graph Builder → Query Agent → [KR Search | KB Search] → Context Builder → Explanation → END
+  START → Ingestion → Graph Builder → Query Agent → [KR Search | Edge Memory Search] → Context Builder → Explanation → END
 
 Flow (query mode):
-  START → Ingestion (skip) → Query Agent → [KR Search | KB Search] → Context Builder → Explanation → END
+  START → Ingestion (skip) → Query Agent → [KR Search | Edge Memory Search] → Context Builder → Explanation → END
 """
 
 from __future__ import annotations
@@ -170,97 +170,89 @@ async def kr_search_node(state: GraphState) -> dict[str, Any]:
         }
 
 
-async def kb_search_node(state: GraphState) -> dict[str, Any]:
-    """KB Search: ChromaDB semantic memory retrieval.
+EDGE_SEARCH_LIMIT = 10
 
-    Searches both episodic memories and semantic preferences in parallel
-    against ChromaDB. Populates episodic_memories and semantic_preferences.
+
+async def edge_memory_search_node(state: GraphState) -> dict[str, Any]:
+    """Qdrant Edge hybrid memory retrieval (authoritative offline memory).
+
+    Local and fleet hits keep their origin/revision/device provenance. Failures
+    degrade to an empty hit list so answers never depend on cloud or Neo4j.
     """
-    query = state.get("user_query", "")
+    import time
+    from datetime import datetime, timezone
+
+    from app.edge.memory.hybrid_search import SearchMode
+    from app.edge.registry import get_edge_runtime
+
+    query = (state.get("user_query") or "").strip()
     if not query:
-        logger.info("kb_search.no_query", reason="skipping KB search")
-        return {
-            "agent_trace": state.get("agent_trace", [])
-            + ["KBSearch: no query, skipped"]
-        }
+        return {"edge_memory_hits": [], "agent_trace": ["EdgeMemory: no query, skipped"]}
 
+    runtime = get_edge_runtime()
+    if runtime is None:
+        logger.warning("edge_memory_search.no_runtime")
+        return {"edge_memory_hits": [], "agent_trace": ["EdgeMemory: degraded - runtime unavailable"]}
+
+    started = time.perf_counter()
     try:
-        from app.database.chroma_client import get_chromadb_client
+        raw = await runtime.search.search(query, SearchMode.HYBRID, EDGE_SEARCH_LIMIT)
+    except Exception as exc:
+        logger.warning("edge_memory_search.error", error=str(exc))
+        return {"edge_memory_hits": [], "agent_trace": [f"EdgeMemory: degraded - {str(exc)[:100]}"]}
+    latency_ms = round((time.perf_counter() - started) * 1000, 3)
 
-        client = get_chromadb_client()
-
-        # Search episodic memories
-        episodic_collection = client.get_episodic_collection()
-        embedding_service = client._embedding_service
-        embedding = await embedding_service.embed_text(query)
-
-        episodic_results = episodic_collection.query(
-            query_embeddings=[embedding],
-            n_results=5,
-            include=["documents", "metadatas", "distances"],
+    hits: list[dict[str, Any]] = []
+    for h in raw:
+        payload = h.payload
+        hits.append(
+            {
+                "id": h.point_id,
+                "memory_id": payload.get("memory_id", h.point_id),
+                "logical_id": payload.get("logical_id"),
+                "content": payload.get("content", ""),
+                "origin": h.origin.value,
+                "revision": payload.get("revision"),
+                "device_id": payload.get("device_id"),
+                "source_type": payload.get("source_type"),
+                "source_id": payload.get("source_id"),
+                "memory_type": payload.get("memory_type"),
+                "timestamp": str(payload.get("updated_at") or payload.get("created_at") or ""),
+                "score": h.score,
+                "dense_score": h.dense_score,
+                "sparse_score": h.sparse_score,
+            }
         )
 
-        episodic_memories: list[dict] = []
-        if episodic_results["ids"] and episodic_results["ids"][0]:
-            for i, ep_id in enumerate(episodic_results["ids"][0]):
-                metadata = episodic_results["metadatas"][0][i]
-                episodic_memories.append(
-                    {
-                        "id": ep_id,
-                        "content": episodic_results["documents"][0][i],
-                        "summary": metadata.get("summary", ""),
-                        "session_id": metadata.get("session_id", ""),
-                        "timestamp": metadata.get("timestamp", ""),
-                    }
-                )
+    counts = {"LOCAL": 0, "FLEET": 0}
+    for hit in hits:
+        counts[hit["origin"]] = counts.get(hit["origin"], 0) + 1
+    try:
+        from app.edge.state.activity import ActivityEvent
 
-        # Search semantic preferences
-        semantic_collection = client.get_semantic_collection()
-        semantic_results = semantic_collection.query(
-            query_embeddings=[embedding],
-            n_results=3,
-            include=["documents", "metadatas", "distances"],
+        runtime.activity.append(
+            ActivityEvent(
+                event_type="SEARCH_COMPLETED",
+                device_id=getattr(runtime, "device_id", "unknown"),
+                timestamp=datetime.now(timezone.utc),
+                message=f"Edge memory search returned {len(hits)} results",
+                metadata={
+                    "mode": SearchMode.HYBRID.value,
+                    "result_count": len(hits),
+                    "origin_counts": counts,
+                    "latency_ms": latency_ms,
+                },
+            )
         )
+    except Exception as exc:  # activity log must never block answering
+        logger.warning("edge_memory_search.activity_failed", error=str(exc))
 
-        semantic_preferences: list[dict] = []
-        if semantic_results["ids"] and semantic_results["ids"][0]:
-            for i, pref_id in enumerate(semantic_results["ids"][0]):
-                metadata = semantic_results["metadatas"][0][i]
-                semantic_preferences.append(
-                    {
-                        "id": pref_id,
-                        "content": semantic_results["documents"][0][i],
-                        "preference_type": metadata.get("preference_type", ""),
-                        "confidence": metadata.get("confidence", 0.0),
-                    }
-                )
-
-        logger.info(
-            "kb_search.complete",
-            episodic=len(episodic_memories),
-            semantic=len(semantic_preferences),
-        )
-
-        existing_trace = state.get("agent_trace", [])
-        return {
-            "episodic_memories": episodic_memories,
-            "semantic_preferences": semantic_preferences,
-            "agent_trace": existing_trace
-            + [
-                f"KBSearch: {len(episodic_memories)} episodic, "
-                f"{len(semantic_preferences)} semantic"
-            ],
-        }
-
-    except Exception as e:
-        logger.warning("kb_search.error", error=str(e))
-        existing_trace = state.get("agent_trace", [])
-        return {
-            "episodic_memories": [],
-            "semantic_preferences": [],
-            "agent_trace": existing_trace
-            + [f"KBSearch: degraded — {str(e)[:100]}"],
-        }
+    return {
+        "edge_memory_hits": hits,
+        "agent_trace": [
+            f"EdgeMemory: {len(hits)} hits (LOCAL={counts['LOCAL']}, FLEET={counts['FLEET']}) in {latency_ms}ms"
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -275,14 +267,13 @@ def _route_after_query(state: GraphState) -> list[str]:
     KR and KB search nodes concurrently. Otherwise (e.g., simple greeting),
     skip directly to context builder.
 
-    Both KR and KB search converge at context_builder via direct edges.
+    Both KR and edge search converge at context_builder via direct edges.
     """
     cypher = state.get("cypher_query", "")
     if cypher:
-        # Parallel fan-out: both KR and KB search run concurrently
-        return ["kr_search", "kb_search"]
-    # No graph query needed — go straight to context building
-    return ["context_builder"]
+        # Edge memory always runs; Neo4j enrichment is additive
+        return ["kr_search", "edge_memory_search"]
+    return ["edge_memory_search"]
 
 
 def _route_after_context_builder(state: GraphState) -> str:
@@ -355,11 +346,11 @@ def _build_graph() -> StateGraph:
 
     Topology (document ingestion mode):
       START → ingestion → graph_builder → query_agent
-        → [kr_search, kb_search] (parallel) → context_builder → explanation → END
+        → [kr_search, edge_memory_search] (parallel) → context_builder → explanation → END
 
     Topology (query mode — ingestion returns no entities):
       START → ingestion → query_agent
-        → [kr_search, kb_search] (parallel) → context_builder → explanation → END
+        → [kr_search, edge_memory_search] (parallel) → context_builder → explanation → END
 
     Error handling (cyclic recovery per CONTEXT.md Decision 5):
       - context_builder → retry on error (max 3 retries)
@@ -367,7 +358,7 @@ def _build_graph() -> StateGraph:
       - error_handler → graceful failure END
 
     Parallel search (CONTEXT.md Decision 6):
-      - Query Agent fans out to KR (Neo4j) and KB (ChromaDB) simultaneously
+      - Query Agent fans out to KR (Neo4j) and Qdrant Edge memory simultaneously
       - Both converge at Context Builder via direct edges
       - I/O bound, no VRAM contention
     """
@@ -378,7 +369,7 @@ def _build_graph() -> StateGraph:
     graph.add_node("graph_builder", graph_builder_agent_node)
     graph.add_node("query_agent", query_agent_node)
     graph.add_node("kr_search", kr_search_node)
-    graph.add_node("kb_search", kb_search_node)
+    graph.add_node("edge_memory_search", edge_memory_search_node)
     graph.add_node("context_builder", context_builder_node)
     graph.add_node("explanation", explanation_agent_node)
     graph.add_node("error_handler", error_handler_node)
@@ -399,17 +390,17 @@ def _build_graph() -> StateGraph:
     graph.add_edge("graph_builder", "query_agent")
 
     # ── Query Agent → conditional fan-out ──────────────────────
-    # Parallel KR + KB search, or skip to context for simple queries
+    # Edge memory always; KR when Cypher exists
     graph.add_conditional_edges(
         "query_agent",
         _route_after_query,
-        ["kr_search", "kb_search", "context_builder"],
+        ["kr_search", "edge_memory_search"],
     )
 
     # ── Parallel retrieval → Context Builder ───────────────────
     # Both KR and KB converge at context_builder (LangGraph parallelism)
     graph.add_edge("kr_search", "context_builder")
-    graph.add_edge("kb_search", "context_builder")
+    graph.add_edge("edge_memory_search", "context_builder")
 
     # ── Context Builder → Explanation or retry ─────────────────
     # Cyclic recovery: retry on error, fail gracefully after MAX_RETRIES
@@ -459,7 +450,7 @@ def create_pipeline_graph() -> Any:
        so tokens reach Open WebUI in real time.
 
     Topology: START → ingestion → [graph_builder] → query_agent
-              → [kr_search | kb_search] → context_builder → END
+              → [kr_search | edge_memory_search] → context_builder → END
     """
     graph = StateGraph(GraphState)
 
@@ -467,7 +458,7 @@ def create_pipeline_graph() -> Any:
     graph.add_node("graph_builder", graph_builder_agent_node)
     graph.add_node("query_agent", query_agent_node)
     graph.add_node("kr_search", kr_search_node)
-    graph.add_node("kb_search", kb_search_node)
+    graph.add_node("edge_memory_search", edge_memory_search_node)
     graph.add_node("context_builder", context_builder_node)
 
     graph.add_edge(START, "ingestion")
@@ -480,10 +471,10 @@ def create_pipeline_graph() -> Any:
     graph.add_conditional_edges(
         "query_agent",
         _route_after_query,
-        ["kr_search", "kb_search", "context_builder"],
+        ["kr_search", "edge_memory_search"],
     )
     graph.add_edge("kr_search", "context_builder")
-    graph.add_edge("kb_search", "context_builder")
+    graph.add_edge("edge_memory_search", "context_builder")
     graph.add_edge("context_builder", END)
 
     return graph.compile()
