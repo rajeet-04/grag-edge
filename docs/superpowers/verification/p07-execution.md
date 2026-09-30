@@ -23,3 +23,6 @@ First review (Claude opus, read-only) of `231a1d6..2347890`: FAIL. Critical C1 (
 - N6 (peer-resolved head forked/false-deleted) fixed in 53e9f1f: revise/tombstone raise "resolved by a peer" (409). Adopting the peer resolution is deferred.
 - Deferred: M6, M7, N3, N4, N7, N8. No fourth independent review (user-directed fast finish).
 - Gate: tests/edge 144 passed; baseline-check exit 0 with exactly the 10 known failures (EMBEDDING_MODEL=absent-embedding-model); make compose-config OK; git diff --check clean.
+
+## Later resolution
+M6, M7, N3 and N4 were fixed after this phase (see p12-execution.md, second follow-up).
