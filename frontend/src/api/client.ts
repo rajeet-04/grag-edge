@@ -58,7 +58,7 @@ export const api = {
   ask: async (q: string): Promise<string> => {
     let res: Response;
     try {
-      res = await fetch(`${API_BASE}/v1/chat/completions`, {
+      res = await fetch(`${API_BASE.replace(/\/api$/, "")}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: "grag-pipeline-v1", stream: false, messages: [{ role: "user", content: q }] }),

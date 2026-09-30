@@ -49,6 +49,7 @@ export interface MemoryRecord {
   confidence?: number | null;
   created_at?: string;
   is_deleted?: boolean;
+  sync_reason_codes?: string[];
   [key: string]: unknown;
 }
 

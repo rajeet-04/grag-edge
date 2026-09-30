@@ -138,6 +138,20 @@ services:
       - grag-edge-net
       - grag-cloud-net
 
+  # ── GRAG Edge operations console (depends only on the edge API) ───────────
+  grag-edge-ui:
+    build:
+      context: ./frontend
+    container_name: grag-edge-ui
+    ports:
+      - "${EDGE_UI_PORT:-5173}:80"
+    depends_on:
+      fastapi:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - grag-edge-net
+
   # ── Open WebUI — Chat Interface ───────────────────────────────────────────
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
