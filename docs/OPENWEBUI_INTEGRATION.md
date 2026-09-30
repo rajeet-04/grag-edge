@@ -13,7 +13,7 @@ This guide explains how to connect OpenWebUI to GRAG AI as a custom backend.
 ### 1. Start GRAG AI
 
 ```bash
-cd R:\Code\GRAG AI
+cd <repository root>
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 

@@ -3,7 +3,7 @@ Graph Builder Agent node for LangGraph.
 
 Wraps GraphWriterService with entity resolution and temporal versioning.
 Handles persisting extracted entities and relations to Neo4j while
-enforcing the KR/KB firewall (writes only to Neo4j, never ChromaDB).
+enforcing the KR/KB firewall (writes only to Neo4j, never Qdrant Edge).
 
 Flow: entities + relations → EntityResolver → GraphWriter → Neo4j
 """
@@ -37,7 +37,7 @@ class GraphBuilderAgent:
     1. Run entity resolution to deduplicate against existing graph
     2. Write entities to Neo4j with MERGE (idempotent)
     3. Write relations with temporal valid_from/valid_to properties
-    4. Preserve KR/KB firewall — Neo4j only, no ChromaDB writes
+    4. Preserve KR/KB firewall — Neo4j only, no Qdrant Edge writes
     """
 
     def __init__(

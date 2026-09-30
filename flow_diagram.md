@@ -1,4 +1,4 @@
-# GRAG AI: Architecture & Data Flow
+# GRAG Edge: Architecture & Data Flow (base GRAG AI pipeline)
 
 This document outlines the dual-memory architecture of GRAG AI. It is broken down into two primary lifecycles: Data Ingestion (Storage) and Query Resolution (Inference).
 
@@ -20,7 +20,7 @@ flowchart TD
     Embedder[Embedding Model\nnomic-embed-text]
     
     Neo4j[(Neo4j KR\nTemporal Graph)]
-    Chroma[(ChromaDB KB\nVector Store)]
+    Chroma[(Qdrant Edge KB\nLocal Memory)]
 
     Doc -->|POST Request| API
     API --> Orchestrator
@@ -31,8 +31,8 @@ flowchart TD
     GraphBuilder -->|Cypher Merge| Neo4j
     
     Chunker -->|Text Chunks| Embedder
-    Embedder -->|768-dim Vectors| ChromaDBStore[Vector Indexing]
-    ChromaDBStore --> Chroma
+    Embedder -->|768-dim Vectors| EdgeStore[Vector Indexing]
+    EdgeStore --> Chroma
 ```
 
 ---
@@ -42,7 +42,7 @@ flowchart TD
 * Input: Raw documents hit FastAPI
 * Orchestration: LangGraph manages flow
 * Graph Path (KR): Extract entities + relationships → Neo4j
-* Vector Path (KB): Chunk + embed → ChromaDB
+* Vector Path (KB): Chunk + embed → Qdrant Edge
 
 ---
 
@@ -63,7 +63,7 @@ flowchart TD
     ExplanationAgent[xAI Agent]
     
     Neo4j[(Neo4j KR)]
-    Chroma[(ChromaDB KB)]
+    Chroma[(Qdrant Edge KB)]
     
     Ollama[Local LLM\nQwen2.5]
 
@@ -94,7 +94,7 @@ flowchart TD
 ### Query Breakdown
 
 * Graph-first retrieval (Neo4j)
-* Fallback to semantic search (ChromaDB)
+* Fallback to semantic search (Qdrant Edge)
 * Context trimming (token safety)
 * Explainability via reasoning path
 * Streaming output via SSE
@@ -129,7 +129,7 @@ flowchart LR
 ## Final Architecture Summary
 
 * **KR (Neo4j):** structured reasoning
-* **KB (Chroma):** semantic fallback
+* **KB (Qdrant Edge):** semantic fallback
 * **LangGraph:** orchestration
 * **Ollama:** local inference
 * **SSE:** real-time UX

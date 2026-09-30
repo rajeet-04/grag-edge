@@ -1,112 +1,65 @@
-# GRAG AI Setup Guide
+# GRAG Edge Setup
 
 ## Prerequisites
 
-### Hardware Requirements
-- **VRAM**: 8GB (for LLM models)
-- **RAM**: 16GB
-- **Disk**: 10GB+ for Neo4j, Qdrant Edge, models
+- Docker Engine with Compose (the scripts use `docker compose`, falling back to `docker-compose`).
+- Python 3.12+ and [uv](https://docs.astral.sh/uv/) for local tests.
+- Node 22+ for frontend tests (or any Node container).
+- Disk: 10 GB+ for images and models. Hardware target: 8 GB VRAM, 16 GB RAM; a CPU Ollama image works
+  for the demo.
+- No cloud credentials. Ollama Cloud (`OLLAMA_CLOUD_API_KEY`) is an explicit opt-in that the demo never uses.
 
-### Software Requirements
-- Python 3.12+
-- Docker (optional but recommended)
-- Neo4j 5.20+
-- Ollama
-
-### Option 1: Docker Compose Setup (Recommended)
-
-The full stack (Neo4j, Ollama, GRAG API, and Open WebUI) is managed via a single `docker-compose.yml`.
-
-### Step 1: Install NVIDIA Container Toolkit
-If you have an NVIDIA GPU, ensure the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) is installed on your host to enable GPU acceleration for Ollama.
-
-### Step 2: Configure Environment
+## Configuration
 
 ```bash
-# Clone repository
-git clone https://github.com/rajeet-04/GRAG-AI.git
-cd grag-ai
-
-# Create your .env
-cp env.example .env
+cp .env.example .env
 ```
 
-### Step 3: Configure Hybrid Cloud (Optional but Recommended)
-For the best performance, enable **Ollama Cloud** for reasoning tasks while keeping ingestion local:
-1. Get your API key from [ollama.com](https://ollama.com).
-2. Edit `.env`:
-   ```env
-   OLLAMA_CLOUD_ENABLED=true
-   OLLAMA_CLOUD_API_KEY=your_key_here
-   OLLAMA_CLOUD_MODEL=minimax-m2.7:cloud
-   ```
+Key variables (all have working defaults in `.env.example` / `docker-compose.yml`):
 
-### Step 4: Start the Stack
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `DEVICE_ID` | `robot-edge-001` | Identity stamped on this robot's memories |
+| `QDRANT_EDGE_PATH` | `./data/qdrant-edge` | Local shard directory (fleet shard is a sibling) |
+| `EDGE_EMBEDDING_DIMENSION` | `768` | Must match the embedding model (`nomic-embed-text`) |
+| `QDRANT_URL` | `http://qdrant-server:6333` | Fleet server, reachable only on `grag-cloud-net` |
+| `QDRANT_COLLECTION` | `grag_fleet_memory` | Fleet collection |
+| `QDRANT_API_KEY` | unset | Optional. If the server requires a key, set the same value for both client and server; a blank value on the server enables auth unexpectedly |
+| `OLLAMA_MODEL` | `qwen3.5:0.8b` | Local chat model |
+| `OLLAMA_DOCKER_BASE_URL` | `http://ollama:11434` | Ollama URL as seen from containers |
+| `API_KEY` | blank | Optional bearer key for the compatibility endpoint |
+| `LLM_USE_CLOUD` | `false` | Keep false for offline/credential-free operation |
+
+## Run the stack
 
 ```bash
-# Pull and start all services
-docker compose up -d
-
-# Monitor model pull progress (required on first run)
-docker logs -f grag-ollama-init
+docker compose config -q
+make demo-start          # qdrant-server + fastapi (edge API) with seeded data
+docker compose up -d     # optional: also Neo4j, Ollama, dashboard, Open WebUI
 ```
 
-### Step 5: Access the UI
-- **Open WebUI**: [http://localhost:3000](http://localhost:3000)
-- **Neo4j Browser**: [http://localhost:7474](http://localhost:7474)
-- **GRAG API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
+Service map: edge API `:8000` (`/docs`), dashboard `:5173`, Open WebUI `:3000`, Neo4j browser `:7474`,
+Ollama `:11434`. The fleet Qdrant Server has no host port by design. Robot B (`--profile fleet-demo`) is
+optional and listens on `:8002`.
 
----
+## Local development
 
-## Option 2: Manual / Local Setup
-
-### Step 1: Install Dependencies
 ```bash
-# Using uv
 uv sync
-
-# Or pip
-pip install -r requirements.txt
+uv run pytest tests/edge tests/demo tests/e2e tests/performance -q
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+cd frontend && npm ci && npm test -- --run && npm run build
 ```
 
-### Step 2: Start Neo4j & Ollama
-Ensure Neo4j (bolt://localhost:7687) and Ollama (http://localhost:11434) are running on your host.
-
-### Step 3: Run the Server
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
----
+Local runs use the native `qdrant-edge-py` library; no Qdrant Server is needed for the edge tests
+(live sync tests require Docker and skip otherwise).
 
 ## Troubleshooting
 
-### ⚡ Latency & Streaming
-**Issue**: Message takes 10+ seconds to start typing.
-**Solution**: This is normal for the first-token latency (~3-5s for graph search). Ensure `stream: true` is set in your client. GRAG AI uses a two-phase stream: the "Processing" message arrives via segment 1, then the LLM tokens arrive via native SSE.
-
-### 🧩 Mermaid Diagram Parse Errors
-**Issue**: Diagrams show a red "Parse Error" in Open WebUI.
-**Solution**: This usually happens if the LLM generates complex labels with quotes. We have added strict system prompt rules to prevent this. If it persists, check `app/agents/explanation_agent.py` for the Mermaid formatting rules.
-
-### 🐳 Docker GPU Issues
-**Issue**: `could not select device driver "" with capabilities: [gpu]`
-**Solution**: You don't have the NVIDIA Container Toolkit installed or `nvidia-container-runtime` isn't the default. You can remove the `deploy: resources` section from `docker-compose.yml` to run on CPU only (very slow).
-
----
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OLLAMA_CLOUD_ENABLED` | `false` | Enable/Disable cloud offloading |
-| `OLLAMA_CLOUD_API_KEY` | - | Required if cloud is enabled |
-| `NEO4J_URI` | `bolt://neo4j:7687` | Use `localhost` for local, `neo4j` for docker |
-| `CONTEXT_TOKEN_BUDGET` | `8192` | Adjust based on your model's capacity |
-| `API_KEY` | - | Required for Open WebUI bearer auth |
-
----
-
-## Next Steps
-- Review `README.md` for architecture details.
-- Review `AGENT/OLLAMA.md` for protocol specifications.
+- **Dashboard shows OFFLINE after `make demo-online`**: wait one connectivity interval (a few seconds);
+  check `make demo-status`.
+- **API port 8000 unreachable from host in nested Docker runtimes**: the demo scripts call the API via
+  `docker exec` for this reason; use `make demo-status`.
+- **Ollama GPU error**: the default image is CPU; only GPU hosts need the NVIDIA Container Toolkit.
+- **Stale image after code change**: `make demo-start` rebuilds (`up -d --build`).
+- **Interrupted recording**: `make demo-reset` restores a clean, repeatable state.

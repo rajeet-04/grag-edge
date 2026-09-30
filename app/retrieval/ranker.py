@@ -67,11 +67,11 @@ class ScoredResult(dict):
 def normalize_distance_to_similarity(distance: float) -> float:
     """Convert distance to similarity score.
 
-    ChromaDB returns distances (lower = better).
+    Legacy vector distance semantics: distances (lower = better).
     Convert to similarity (higher = better) for unified scoring.
 
     Args:
-        distance: ChromaDB distance value (typically 0-1).
+        distance: distance value (typically 0-1).
 
     Returns:
         Similarity score (0-1), clamped to valid range.

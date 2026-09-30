@@ -238,8 +238,8 @@ def merge_with_budget(
     Args:
         kr_entities: KR entity results from Neo4j
         kr_relations: KR relation results from Neo4j
-        episodic_memories: KB episodic memory results from ChromaDB
-        semantic_preferences: KB semantic preference results from ChromaDB
+        episodic_memories: KB episodic memory results from Qdrant Edge
+        semantic_preferences: KB semantic preference results from Qdrant Edge
         budget: Optional token budget override (uses ContextConfig default)
 
     Returns:

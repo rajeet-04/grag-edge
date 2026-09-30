@@ -21,7 +21,7 @@ class GraphitiClient:
 
     KR/KB SPLIT:
     - Graphiti: KR layer (factual knowledge evolution)
-    - ChromaDB: KB layer (conversation history, episodic memory)
+    - Qdrant Edge: KB layer (conversation history, episodic memory)
     """
 
     def __init__(
