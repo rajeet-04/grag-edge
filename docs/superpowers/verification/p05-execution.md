@@ -46,3 +46,5 @@ Focused tests were RED (3 failures) because attempt rows lacked `started_at`, `f
 ## Legacy history migration correction
 
 A migration regression was RED because the first migration inferred attempt outcomes and timestamps from legacy `error`/outbox status. Those fields cannot reliably recover when an attempt started or ended, so the migration now preserves legacy `created_at`, `error`, and outbox status while marking the result `LEGACY_UNKNOWN` and leaving `started_at`/`finished_at` null. New attempts still record complete lifecycle data.
+
+- The expanded legacy fixture was RED against inferred history, then passed with the unknown-history migration. Clean archive of commit `6b169e8` (excluding untracked P06 work): edge suite **93 passed, 1 skipped**; baseline-check exit 0 with **293 passed, 2 skipped, and exactly 10 known imported failures**, no regression.
