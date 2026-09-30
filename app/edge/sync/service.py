@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import math
 from typing import Any
 
-from app.edge.conflicts.service import trusted_resolves
+from app.edge.conflicts.service import fleet_tips, trusted_resolves
 from app.edge.memory.models import MemoryRecord, Sensitivity, SyncPolicy, SyncState
 from app.edge.memory.store import StoredPoint
 from app.edge.state.activity import ActivityEvent, ActivityLog
@@ -31,12 +31,13 @@ class SyncRunResult:
 
 
 class SyncService:
-    def __init__(self, store: Any, memories: Any, outbox: SyncOutbox, db: EdgeStateDB, activity: ActivityLog, remote: Any, device_id: str, embedding_dimension: int = 768, batch_size: int = 50, snapshots: Any | None = None, conflicts: Any | None = None):
+    def __init__(self, store: Any, memories: Any, outbox: SyncOutbox, db: EdgeStateDB, activity: ActivityLog, remote: Any, device_id: str, embedding_dimension: int = 768, batch_size: int = 50, snapshots: Any | None = None, conflicts: Any | None = None, cleanup_confirmed: bool = False):
         self.store, self.memories, self.outbox = store, memories, outbox
         self.db, self.activity, self.remote = db, activity, remote
         self.device_id, self.embedding_dimension, self.batch_size = device_id, embedding_dimension, batch_size
         self.snapshots = snapshots
         self.conflicts = conflicts
+        self.cleanup_confirmed = cleanup_confirmed
         self._run_lock = asyncio.Lock()
 
     @staticmethod
@@ -101,8 +102,12 @@ class SyncService:
         delete_local = getattr(self.store, "delete_local", None)
         if delete_local is None:
             return 0
+        # A memory whose fleet copies are still being withdrawn keeps its local copy.
+        retracting = {i for job in self._pending_retractions() for i in job["target_ids"]}
         removed = 0
         for memory_id, entry in confirmed.items():
+            if memory_id in retracting:
+                continue
             local = self.store.retrieve(memory_id)
             fleet = self.store.retrieve_fleet(memory_id)
             if local is None or fleet is None:
@@ -246,6 +251,8 @@ class SyncService:
                 await self._blocking(self._scan_conflicts)
                 if result.refresh_error is None:
                     retraction_error = await self._confirm_retractions() or retraction_error
+                    if self.cleanup_confirmed and not retraction_error:
+                        await self._blocking(self.cleanup_confirmed_local, datetime.now(timezone.utc).timestamp())
                 if retraction_error and result.refresh_error is None:
                     result = SyncRunResult("DEGRADED", result.uploaded, result.failed, result.skipped, result.pending,
                         result.synchronized, result.snapshot_pending, retraction_error)
@@ -404,10 +411,7 @@ class SyncService:
                 record.resolves_memory_ids, record.logical_id, logical_of)})
             fleet_by_logical.setdefault(record.logical_id, []).append(record)
 
-        def tips_of(records: list[Any]) -> list[Any]:
-            return [r for r in records if not any(
-                (c.parent_revision == r.revision and c.revision > r.revision) or r.memory_id in c.resolves_memory_ids
-                for c in records)]
+        tips_of = fleet_tips
 
         found = 0
         for conflict in self.conflicts.list_open():
@@ -426,11 +430,25 @@ class SyncService:
                     with self.db.transaction() as conn:
                         conn.execute("UPDATE memory_policy SET sync_state='SUPERSEDED',updated_at=? WHERE memory_id=? AND sync_state='CONFLICTED'",
                                      (datetime.now(timezone.utc).isoformat(), head.memory_id))
-        for logical_id, local in heads.items():
+        for logical_id in sorted(set(heads) | set(fleet_by_logical)):
             fleet_records = fleet_by_logical.get(logical_id)
-            if not fleet_records or local.is_deleted or local.sync_state not in self._SCAN_STATES:
+            if not fleet_records:
                 continue
             own_ids = self._own_memory_ids(logical_id)
+            local = heads.get(logical_id)
+            # N4: the newest own revision may live only in the fleet (local copy cleaned,
+            # or an older superseded revision is all that remains locally). It still is
+            # this device's head, so scan it; it is materialized locally only on conflict.
+            owned_fleet = [r for r in fleet_records if r.memory_id in own_ids and not r.is_deleted]
+            standin = False
+            if owned_fleet:
+                newest = max(owned_fleet, key=lambda r: (r.revision, r.memory_id))
+                if local is None or newest.revision > local.revision:
+                    proven = self.memories.owned_fleet_head(logical_id)
+                    if proven is not None:
+                        local, standin = proven, True
+            if local is None or local.is_deleted or local.sync_state not in self._SCAN_STATES:
+                continue
             local_history = [r for r in local_records if r.logical_id == logical_id]
             local_history += [r for r in fleet_records if r.memory_id in own_ids and r.memory_id not in {h.memory_id for h in local_history}]
             for fleet in sorted(tips_of(fleet_records), key=lambda r: (r.revision, r.memory_id)):
@@ -440,6 +458,8 @@ class SyncService:
                 if conflict is None or self.conflicts.get(conflict.conflict_id).status not in ("OPEN", "RESOLVING"):
                     continue
                 found += 1
+                if standin:
+                    self.memories.restore_owned_head(logical_id)
                 for item in self.outbox.all():
                     if item.memory_id == local.memory_id and item.status in self._BLOCKABLE:
                         self.outbox.cancel(item.id, SyncState.CONFLICTED.value)

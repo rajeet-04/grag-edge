@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     # Dense hits at or below this cosine score with no keyword match are not relevant.
     # Calibrated on nomic-embed-text: related demo memories score 0.6+, unrelated ones 0.37-0.39.
     edge_min_dense_score: float = Field(default=0.5, alias="EDGE_MIN_DENSE_SCORE")
+    edge_cleanup_confirmed_local: bool = Field(default=True, alias="EDGE_CLEANUP_CONFIRMED_LOCAL")
 
     # Qdrant Server fleet synchronization
     qdrant_url: str = Field(default="http://localhost:6333", alias="QDRANT_URL")

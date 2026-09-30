@@ -41,7 +41,8 @@ class EdgeRuntime:
             settings.qdrant_url,settings.qdrant_collection,settings.qdrant_api_key) if hasattr(store,"fleet_snapshot_base") else None
         self.conflicts = ConflictService(self.state_db, self.activity)
         self.sync = SyncService(store, self.memories, self.outbox, self.state_db, self.activity, self.cloud,
-            self.device_id, settings.embedding_dimension, snapshots=self.snapshots, conflicts=self.conflicts)
+            self.device_id, settings.embedding_dimension, snapshots=self.snapshots, conflicts=self.conflicts,
+            cleanup_confirmed=settings.edge_cleanup_confirmed_local)
         self._background: set[asyncio.Task] = set()
         self._manual_runs: set[asyncio.Task] = set()
         self.search_latencies_ms: collections.deque[float] = collections.deque(maxlen=200)

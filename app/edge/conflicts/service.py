@@ -32,6 +32,24 @@ def trusted_resolves(resolves: Iterable[str], logical_id: str, logical_of: dict[
     return tuple(i for i in resolves if logical_of.get(i, logical_id) == logical_id)
 
 
+def fleet_tips(records: list[MemoryRecord]) -> list[MemoryRecord]:
+    """Fleet branch tips of one logical memory, hiding only provably superseded records.
+
+    A record is hidden when another record lists it in `resolves_memory_ids`, or
+    when a later record names its revision as parent AND that revision number is
+    unique among the retained records. Branch numbers shared by sibling
+    branches prove nothing, so siblings stay visible (over-showing a tip at
+    worst opens a conflict the user can dismiss; over-hiding loses one).
+    """
+    per_revision: dict[int, int] = {}
+    for r in records:
+        per_revision[r.revision] = per_revision.get(r.revision, 0) + 1
+    return [r for r in records if not any(
+        r.memory_id in c.resolves_memory_ids
+        or (per_revision[r.revision] == 1 and c.parent_revision == r.revision and c.revision > r.revision)
+        for c in records)]
+
+
 class ConflictResolutionError(ValueError):
     """Raised when a resolution request is invalid or contradicts a prior one."""
 

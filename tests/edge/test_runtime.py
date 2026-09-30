@@ -81,3 +81,13 @@ def test_snapshot_transport_close_failure_still_releases_runtime_resources(tmp_p
         asyncio.run(runtime.close())
     assert store.closed==1
     assert runtime.state_db._connection is None
+
+
+def test_runtime_wires_confirmed_local_cleanup_by_default_and_can_disable(tmp_path, monkeypatch):
+    runtime = EdgeRuntime(store=Store(), state_path=tmp_path / "a.db")
+    assert runtime.sync.cleanup_confirmed is True
+    monkeypatch.setenv("EDGE_CLEANUP_CONFIRMED_LOCAL", "false")
+    from app.config import get_settings
+    get_settings.cache_clear()
+    assert EdgeRuntime(store=Store(), state_path=tmp_path / "b.db").sync.cleanup_confirmed is False
+    get_settings.cache_clear()

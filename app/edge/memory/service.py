@@ -186,31 +186,34 @@ class MemoryService:
             self._commit_policy(resolution, "MEMORY_ADOPTED", force_state=SyncState.SUPERSEDED)
         return self._overlay(resolution).model_copy(update={"device_id": latest.device_id})
 
-    def _writable_current(self, logical_id: str) -> MemoryRecord | None:
-        """Restore a cleaned fleet copy locally only when this device proves ownership."""
-        local = [record for record in self._records() if record.logical_id == logical_id]
-        if local:
-            latest = max(local, key=lambda record: record.revision)
-            if latest.is_deleted:
-                return None
-            adopted = self._peer_resolution(latest)
-            if adopted is not None:
-                return self._adopt_peer_resolution(latest, adopted)
-            return latest
+    def _owned_fleet_head(self, logical_id: str) -> tuple[Any, MemoryRecord] | None:
+        """Newest fleet copy of this logical memory that this device provably uploaded.
+
+        Read-only. Candidates are filtered by ownership first (durable policy,
+        outbox and a SYNCHRONIZED run acknowledging the exact revision and hash),
+        then the highest owned revision is chosen, so a peer's higher revision
+        or sibling branch never hides or replaces this device's own copy.
+        """
         if self.state_db is None:
             return None
-        fleet_points = [point for point in self.store.list_fleet_points()
-                        if point.payload.get("record_type") == "memory"
-                        and point.payload.get("logical_id") == logical_id]
-        if not fleet_points:
-            return None
-        point = max(fleet_points, key=lambda candidate: (int(candidate.payload.get("revision", 0)), candidate.id))
-        try:
-            record = MemoryRecord.model_validate(point.payload)
-        except Exception:
-            return None
-        if record.is_deleted or record.memory_id != point.id:
-            return None
+        candidates = []
+        for point in self.store.list_fleet_points():
+            if point.payload.get("record_type") != "memory" or point.payload.get("logical_id") != logical_id:
+                continue
+            try:
+                record = MemoryRecord.model_validate(point.payload)
+            except Exception:
+                continue
+            if record.is_deleted or record.memory_id != point.id:
+                continue
+            candidates.append((point, record))
+        candidates.sort(key=lambda pair: (pair[1].revision, pair[0].id), reverse=True)
+        for point, record in candidates:
+            if self._proves_ownership(record):
+                return point, self._overlay(record)
+        return None
+
+    def _proves_ownership(self, record: MemoryRecord) -> bool:
         with self.state_db._lock:
             policy = self.state_db._connection.execute(
                 "SELECT logical_id,revision,sync_policy,sync_state,sensitivity,is_deleted "
@@ -229,7 +232,7 @@ class MemoryService:
                 or policy["sensitivity"] == "restricted" or policy["is_deleted"]
                 or outbox["logical_id"] != record.logical_id or outbox["revision"] != record.revision
                 or outbox["status"] != SyncState.SYNCHRONIZED.value):
-            return None
+            return False
         for row in runs:
             try:
                 run = json.loads(row["value"])
@@ -242,9 +245,39 @@ class MemoryService:
                 and entry.get("content_hash") == record.content_hash
                 for entry in run.get("acknowledged", [])
             ):
-                self.store.upsert(point)
-                return self._overlay(record)
-        return None
+                return True
+        return False
+
+    def owned_fleet_head(self, logical_id: str) -> MemoryRecord | None:
+        """Public read-only view of `_owned_fleet_head` (used by the conflict scan)."""
+        owned = self._owned_fleet_head(logical_id)
+        return owned[1] if owned else None
+
+    def restore_owned_head(self, logical_id: str) -> MemoryRecord | None:
+        """Materialize this device's own cleaned fleet head locally (idempotent)."""
+        owned = self._owned_fleet_head(logical_id)
+        if owned is None:
+            return None
+        self.store.upsert(owned[0])
+        return owned[1]
+
+    def _writable_current(self, logical_id: str) -> MemoryRecord | None:
+        """The head a mutation builds on: the newest of the local head and this
+        device's provably owned fleet copy (cleaned local copies are restored)."""
+        local = [record for record in self._records() if record.logical_id == logical_id]
+        latest = max(local, key=lambda record: record.revision) if local else None
+        if latest is not None and latest.is_deleted:
+            return None
+        owned = self._owned_fleet_head(logical_id)
+        if owned is not None and (latest is None or owned[1].revision > latest.revision):
+            self.store.upsert(owned[0])
+            latest = owned[1]
+        if latest is None:
+            return None
+        adopted = self._peer_resolution(latest)
+        if adopted is not None:
+            return self._adopt_peer_resolution(latest, adopted)
+        return latest
 
     async def write_resolution(self, conflict: Any, content: str) -> MemoryRecord:
         """Idempotently write the resolution revision above both conflict branches."""
