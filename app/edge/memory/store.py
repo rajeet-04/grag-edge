@@ -33,6 +33,14 @@ class EdgeMemoryStore(Protocol):
         """Return persisted local points for history and current-revision checks."""
         ...
 
+    def retrieve_fleet(self, point_id: str) -> StoredPoint | None:
+        """Return a point from the read-only fleet shard, if present."""
+        ...
+
+    def list_fleet_points(self) -> list[StoredPoint]:
+        """Return persisted fleet points for cross-shard inspection."""
+        ...
+
     def close(self) -> None:
         """Flush and release store resources."""
         ...

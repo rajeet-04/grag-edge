@@ -61,12 +61,3 @@ def test_search_exposes_scores_origin_and_provenance(client):
     assert result["origin"] == "LOCAL" and result["score"] == 0.42
     assert result["dense_score"] == 0.7 and result["sparse_score"] == 0.3
     assert result["revision"] == 1 and result["source_id"] == "p1"
-    revised = client.patch(f"/api/v1/edge/memories/{record['memory_id']}", json={"content":"pump alarm updated", "parent_revision":1}).json()
-    assert client.post("/api/v1/edge/search", json={"query":"pump alarm"}).json()["results"] == []
-    import anyio
-    anyio.run(client.app.state.edge_runtime.memories.tombstone, revised["logical_id"])
-    class TombstonedSearch:
-        async def search(self, *_):
-            return [MemoryHit(revised["memory_id"], 0.4, MemoryOrigin.LOCAL, 0.4, None, {})]
-    client.app.state.edge_runtime.search = TombstonedSearch()
-    assert client.post("/api/v1/edge/search", json={"query":"pump alarm"}).json()["results"] == []

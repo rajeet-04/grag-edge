@@ -21,8 +21,14 @@ class Store:
     def retrieve(self, point_id):
         return self.points.get(point_id)
 
+    def retrieve_fleet(self, point_id):
+        return None
+
     def list_points(self):
         return list(self.points.values())
+
+    def list_fleet_points(self):
+        return []
 
     def close(self):
         self.closed += 1

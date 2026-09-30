@@ -200,7 +200,14 @@ class QdrantEdgeStore:
         return self._retrieve(self._fleet, point_id)
 
     def list_points(self) -> list[StoredPoint]:
-        shard = self._require_open()
+        return self._list_shard(self._require_open())
+
+    def list_fleet_points(self) -> list[StoredPoint]:
+        self._require_open()
+        return [] if self._fleet is None else self._list_shard(self._fleet)
+
+    @classmethod
+    def _list_shard(cls, shard: EdgeShard) -> list[StoredPoint]:
         result: list[StoredPoint] = []
         offset = None
         while True:

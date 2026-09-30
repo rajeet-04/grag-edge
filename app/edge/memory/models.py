@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
+from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -74,8 +75,8 @@ class MemoryRecord(BaseModel):
 
 
 class CreateMemory(BaseModel):
-    memory_id: str | None = None
-    logical_id: str | None = None
+    memory_id: UUID | None = None
+    logical_id: UUID | None = None
     device_id: str | None = None
     memory_type: MemoryType = MemoryType.OBSERVATION
     content: str = Field(min_length=1)
