@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import statistics
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
@@ -33,6 +34,9 @@ def stats(request: Request):
     local = [p for p in edge.store.list_points() if p.payload.get("record_type") == "memory"]
     fleet = [p for p in edge.store.list_fleet_points() if p.payload.get("record_type") == "memory"]
     items = edge.outbox.all()
+    with edge.state_db._lock:
+        refresh = edge.state_db._connection.execute("SELECT updated_at FROM sync_checkpoints WHERE checkpoint_id='fleet'").fetchone()
+    latencies = list(edge.search_latencies_ms)
     last_sync = max((item.updated_at for item in items if item.status == "SYNCHRONIZED"), default=None)
     return {
         "local_memory_count": len(local),
@@ -42,7 +46,10 @@ def stats(request: Request):
         "sync_success_count": sum(item.status == "SYNCHRONIZED" for item in items),
         "open_conflict_count": edge.conflicts.open_count(),
         "sync_failure_count": sum(item.retry_count for item in items),
-        "search_latency_ms": None,
+        "last_fleet_refresh": refresh["updated_at"] if refresh else None,
+        "origin_counts": {"LOCAL": len(local), "FLEET": len(fleet)},
+        "search_latency_ms": latencies[-1] if latencies else None,
+        "search_latency_p95_ms": statistics.quantiles(latencies, n=20)[-1] if len(latencies) >= 2 else (latencies[0] if latencies else None),
         "connectivity": edge.connectivity.current()["connectivity"],
     }
 

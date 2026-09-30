@@ -1,7 +1,8 @@
 """Memory inspection and hybrid search endpoints."""
 from datetime import datetime
 import sqlite3
-import sqlite3
+import time
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from app.edge.memory.models import CreateMemory, MemoryRecord, MemoryType, Importance, SyncState, ReviseMemory
@@ -73,7 +74,9 @@ async def revise_memory(memory_id: str, command: ReviseMemory, request: Request)
 
 @router.post("/search")
 async def search_memories(command: SearchRequest, request: Request):
+    started = time.perf_counter()
     hits = await runtime(request).search.search(command.query, command.mode, command.limit)
+    runtime(request).record_search_latency((time.perf_counter() - started) * 1000)
     service = runtime(request).memories
     results = []
     for hit in hits:

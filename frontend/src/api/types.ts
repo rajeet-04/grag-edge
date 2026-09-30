@@ -19,6 +19,9 @@ export interface EdgeStats {
   open_conflict_count: number;
   sync_failure_count: number;
   search_latency_ms: number | null;
+  search_latency_p95_ms?: number | null;
+  last_fleet_refresh?: string | null;
+  origin_counts?: { LOCAL: number; FLEET: number };
   connectivity: Connectivity;
 }
 

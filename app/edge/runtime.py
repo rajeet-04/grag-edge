@@ -1,5 +1,6 @@
 """One owner for local services and cloud synchronization lifecycle."""
 import asyncio
+import collections
 from pathlib import Path
 
 from app.edge.conflicts import ConflictService
@@ -43,6 +44,7 @@ class EdgeRuntime:
             self.device_id, settings.embedding_dimension, snapshots=self.snapshots, conflicts=self.conflicts)
         self._background: set[asyncio.Task] = set()
         self._manual_runs: set[asyncio.Task] = set()
+        self.search_latencies_ms: collections.deque[float] = collections.deque(maxlen=200)
 
     async def start(self):
         """Reconcile metadata and recover uploads interrupted by a process restart."""
@@ -104,6 +106,9 @@ class EdgeRuntime:
                 # The durable outbox remains available for the next worker iteration.
                 pass
             await asyncio.sleep(self.sync_interval_seconds)
+
+    def record_search_latency(self, milliseconds: float) -> None:
+        self.search_latencies_ms.append(milliseconds)
 
     def trigger_sync(self) -> bool:
         for task in tuple(self._manual_runs):
