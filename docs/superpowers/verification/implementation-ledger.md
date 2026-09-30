@@ -24,7 +24,8 @@ P00 is complete at `45fae76`; its regression gate accepts full green or exactly 
 - P07: COMPLETE (user-directed fast finish) at `53e9f1f` — tests/edge 144 passed (live), baseline-check exact 10 known failures, compose-config and diff-check clean. Boundary-B reviews 1-2 findings fixed; review 3 found N6, fixed in `53e9f1f` with a retained test; NO fourth independent review was run (user asked to finish fast). Deferred: M6, M7, N3, N4, N7 (stale 3-device conflicts stay open), N8 (fleet resolves_memory_ids trusted), and adoption of a peer resolution by the losing device (it is blocked from revise/delete with 409 instead). Task 3 tests were written after implementation (TDD deviation). See p07-execution.md.
 - P08: COMPLETE (user-directed fast finish) at `6a02061` (`8614dc2`, `513d959`, `6a02061`) — tests/edge 144 passed, baseline-check exit 0 (360 passed, 1 skipped, exact 10 imported failures, known-failures file unchanged), compose-config and diff-check clean; offline streaming/non-streaming acceptance passes with Qdrant Server/Neo4j down and cloud unset; ChromaDB fully removed. No independent P08 review was run. See p08-execution.md.
 - P09: COMPLETE (user-directed fast finish) at `00e3f50` (`eb95123`, `30a8501`, `04ba28b`, `00e3f50`) — frontend vitest 16/16, `tsc --noEmit` and `vite build` clean, frontend Docker image builds; tests/edge 144 passed, baseline-check exit 0 (360 passed, 1 skipped, exact 10 imported failures), compose-config and diff-check clean. No Playwright browser smoke test and no independent review. See p09-execution.md.
-- P10–P12: NOT STARTED.
+- P10: COMPLETE (user-directed fast finish) at `8a0ce30` (`83cab2d`, `402e9aa`, `8a0ce30`) — make demo-acceptance passed twice from reset with real Docker network cut; tests/demo 20, tests/edge 144, baseline-check exit 0 (380 passed, 1 skipped, exact 10 imported failures), compose-config and diff-check clean. See p10-execution.md.
+- P11–P12: NOT STARTED.
 
 ## Rulings
 
