@@ -3,6 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from contextlib import nullcontext
+from datetime import datetime, timezone
+import json
+import os
+import shutil
+import threading
+from uuid import uuid4
 from typing import Any
 from uuid import UUID
 
@@ -44,6 +51,10 @@ class QdrantEdgeStore:
         self.embedding_dimension = embedding_dimension
         self._local: EdgeShard | None = None
         self._fleet: EdgeShard | None = None
+        self._fleet_lock = threading.RLock()
+        self._refresh_lock = threading.Lock()
+        self._fleet_metadata: dict[str, Any] | None = None
+        self._fleet_active_path = self.fleet_path
         self._bm25 = Bm25(Bm25Config(language="english"))
 
     def open(self) -> None:
@@ -54,9 +65,27 @@ class QdrantEdgeStore:
             vectors={"dense": EdgeVectorParams(self.embedding_dimension, Distance.Cosine)},
             sparse_vectors={"text": EdgeSparseVectorParams(modifier=Modifier.Idf)},
         )
+        self._config = config
         self._local = self._open_shard(self.local_path, config)
         try:
-            self._fleet = self._open_shard(self.fleet_path, config)
+            metadata = self._read_fleet_pointer()
+            if metadata:
+                self._fleet_active_path = self._generation_path(metadata)
+                try:
+                    self._fleet = EdgeShard.load(str(self._fleet_active_path), config)
+                    self._validate_fleet(self._fleet)
+                except Exception:
+                    previous = self._read_json(self._previous_pointer)
+                    if not previous or previous == metadata:
+                        raise RuntimeError("Committed fleet generation cannot be opened")
+                    metadata = previous
+                    self._fleet_active_path = self._generation_path(metadata)
+                    self._fleet = EdgeShard.load(str(self._fleet_active_path), config)
+                    self._validate_fleet(self._fleet)
+                    self._write_pointer(self._pointer, metadata)
+                self._fleet_metadata = metadata
+            else:
+                self._fleet = self._open_shard(self.fleet_path, config)
         except RuntimeError as exc:
             if "empty or corrupt" not in str(exc):
                 self._local.close()
@@ -144,28 +173,29 @@ class QdrantEdgeStore:
     ) -> list[RawSearchHit]:
         if limit <= 0:
             raise ValueError("limit must be positive")
-        shard = self._shard_for_origin(origin)
-        if shard is None:
-            return []
-        try:
-            points = shard.search(
-                SearchRequest(
-                    query=Query.Nearest(vector, using=using),
-                    limit=limit,
-                    with_payload=True,
+        with self._fleet_lock if origin is MemoryOrigin.FLEET else nullcontext():
+            shard = self._shard_for_origin(origin)
+            if shard is None:
+                return []
+            try:
+                points = shard.search(
+                    SearchRequest(
+                        query=Query.Nearest(vector, using=using),
+                        limit=limit,
+                        with_payload=True,
+                    )
                 )
-            )
-        except Exception as exc:
-            raise RuntimeError(f"Qdrant Edge {using} query failed for {origin.value}") from exc
-        return [
-            RawSearchHit(
-                point_id=str(point.id),
-                score=float(point.score),
-                origin=origin,
-                payload=dict(point.payload or {}),
-            )
-            for point in points
-        ]
+            except Exception as exc:
+                raise RuntimeError(f"Qdrant Edge {using} query failed for {origin.value}") from exc
+            return [
+                RawSearchHit(
+                    point_id=str(point.id),
+                    score=float(point.score),
+                    origin=origin,
+                    payload=dict(point.payload or {}),
+                )
+                for point in points
+            ]
 
     def upsert_local(self, point: StoredPoint) -> None:
         local = self._require_open()
@@ -195,16 +225,18 @@ class QdrantEdgeStore:
 
     def retrieve_fleet(self, point_id: str) -> StoredPoint | None:
         self._require_open()
-        if self._fleet is None:
-            return None
-        return self._retrieve(self._fleet, point_id)
+        with self._fleet_lock:
+            if self._fleet is None:
+                return None
+            return self._retrieve(self._fleet, point_id)
 
     def list_points(self) -> list[StoredPoint]:
         return self._list_shard(self._require_open())
 
     def list_fleet_points(self) -> list[StoredPoint]:
         self._require_open()
-        return [] if self._fleet is None else self._list_shard(self._fleet)
+        with self._fleet_lock:
+            return [] if self._fleet is None else self._list_shard(self._fleet)
 
     @classmethod
     def _list_shard(cls, shard: EdgeShard) -> list[StoredPoint]:
@@ -252,17 +284,144 @@ class QdrantEdgeStore:
     def retrieve(self, point_id: str) -> StoredPoint | None:
         return self.retrieve_local(point_id)
 
+    @property
+    def _pointer(self) -> Path:
+        return self.fleet_path.with_name(self.fleet_path.name + "-current.json")
+
+    @property
+    def _previous_pointer(self) -> Path:
+        return self.fleet_path.with_name(self.fleet_path.name + "-previous.json")
+
+    @property
+    def _generations(self) -> Path:
+        return self.fleet_path.with_name(self.fleet_path.name + "-generations")
+
+    @staticmethod
+    def _read_json(path: Path) -> dict[str, Any] | None:
+        if not path.exists():
+            return None
+        return json.loads(path.read_text())
+
+    def _generation_path(self, metadata: dict[str, Any]) -> Path:
+        generation = metadata["generation"]
+        if not isinstance(generation, str) or str(UUID(generation)) != generation:
+            raise ValueError("Invalid fleet generation identifier")
+        return self._generations / generation
+
+    def _read_fleet_pointer(self) -> dict[str, Any] | None:
+        try:
+            metadata = self._read_json(self._pointer)
+            if metadata:
+                self._generation_path(metadata)
+                return metadata
+        except (ValueError, KeyError):
+            pass
+        previous = self._read_json(self._previous_pointer)
+        if previous:
+            self._generation_path(previous)
+            self._write_pointer(self._pointer, previous)
+            return previous
+        if self._pointer.exists():
+            raise RuntimeError("Fleet generation pointer is corrupt and has no recovery metadata")
+        return None
+
+    @staticmethod
+    def _fsync_directory(path: Path) -> None:
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+    @classmethod
+    def _write_pointer(cls, path: Path, metadata: dict[str, Any]) -> None:
+        temporary = path.with_name(path.name + ".tmp-" + str(uuid4()))
+        try:
+            with temporary.open("w") as file:
+                json.dump(metadata, file, sort_keys=True)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary, path)
+            cls._fsync_directory(path.parent)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def fleet_snapshot_metadata(self) -> dict[str, Any] | None:
+        with self._fleet_lock:
+            return dict(self._fleet_metadata) if self._fleet_metadata else None
+
+    def _validate_fleet(self, shard: EdgeShard) -> None:
+        from app.edge.memory.models import MemoryRecord
+        for point in self._list_shard(shard):
+            if len(point.dense) != self.embedding_dimension:
+                raise ValueError("Fleet snapshot has incompatible dense vectors")
+            if point.payload.get("record_type") != "memory":
+                raise ValueError("Fleet snapshot contains a non-memory payload")
+            record = MemoryRecord.model_validate(point.payload)
+            if record.memory_id != point.id:
+                raise ValueError("Fleet snapshot point/payload identity mismatch")
+        # Both indexes must be usable even for an empty snapshot.
+        shard.search(SearchRequest(query=Query.Nearest([1.0] * self.embedding_dimension, using="dense"), limit=1))
+        shard.search(SearchRequest(query=Query.Nearest(SparseVector(indices=[1], values=[1.0]), using="text"), limit=1))
+
+    def _publish_generation(self, path: Path, shard: EdgeShard, kind: str) -> None:
+        shard.flush()
+        # Native flush persists index state; fsync all generation files before pointer publication.
+        for entry in path.rglob("*"):
+            if entry.is_file():
+                with entry.open("rb") as file:
+                    os.fsync(file.fileno())
+        self._fsync_directory(path)
+        self._fsync_directory(path.parent)
+        metadata = {"generation": path.name, "refresh_id": str(uuid4()),
+                    "timestamp": datetime.now(timezone.utc).isoformat(), "kind": kind}
+        with self._fleet_lock:
+            previous = self._fleet_metadata
+            if previous:
+                self._write_pointer(self._previous_pointer, previous)
+            self._write_pointer(self._pointer, metadata)
+            old = self._fleet
+            self._fleet = shard
+            self._fleet_active_path = path
+            self._fleet_metadata = metadata
+            if old:
+                old.close()
+
+    def replace_fleet_from_snapshot(self, snapshot_path: Path) -> None:
+        self._require_open()
+        with self._refresh_lock:
+            self._generations.mkdir(parents=True, exist_ok=True)
+            stage = self._generations / str(uuid4())
+            stage.mkdir()
+            shard = None
+            published = False
+            try:
+                EdgeShard.unpack_snapshot(str(snapshot_path), str(stage))
+                shard = EdgeShard.load(str(stage), self._config)
+                self._validate_fleet(shard)
+                self._publish_generation(stage, shard, "full")
+                published = True
+            finally:
+                if not published:
+                    if shard:
+                        try:
+                            shard.close()
+                        except Exception:
+                            pass
+                    shutil.rmtree(stage, ignore_errors=True)
+
     def close(self) -> None:
         """Flush and close both shards; safe to call repeatedly."""
-        errors: list[Exception] = []
-        for name in ("_local", "_fleet"):
-            shard = getattr(self, name)
-            setattr(self, name, None)
-            if shard is not None:
-                try:
-                    shard.flush()
-                    shard.close()
-                except Exception as exc:
-                    errors.append(exc)
-        if errors:
-            raise RuntimeError("Could not cleanly close Qdrant Edge shards") from errors[0]
+        with self._fleet_lock:
+            errors: list[Exception] = []
+            for name in ("_local", "_fleet"):
+                shard = getattr(self, name)
+                setattr(self, name, None)
+                if shard is not None:
+                    try:
+                        shard.flush()
+                        shard.close()
+                    except Exception as exc:
+                        errors.append(exc)
+            if errors:
+                raise RuntimeError("Could not cleanly close Qdrant Edge shards") from errors[0]
