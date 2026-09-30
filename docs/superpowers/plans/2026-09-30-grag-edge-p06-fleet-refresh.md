@@ -63,9 +63,10 @@
 - Produce: `QdrantEdgeStore.fleet_manifest() -> dict[str, Any]`.
 - Produce: `QdrantEdgeStore.apply_fleet_snapshot(snapshot_path: Path) -> None`.
 - Store a successful refresh checkpoint in `sync_checkpoints`.
+- Emit `FLEET_REFRESH_STARTED` before network/download work and `FLEET_REFRESH_COMPLETED` only after a successfully applied/validated fleet shard.
 
 - [ ] **Step 1: Write partial-refresh tests**
-  Seed fleet revision A, capture manifest, change server to revision B, request partial snapshot, apply it, and assert B is searchable. Assert failed apply keeps A.
+  Seed fleet revision A, capture manifest, change server to revision B, request partial snapshot, apply it, and assert B is searchable. Assert failed apply keeps A and does not emit a completion event; successful apply emits one start and one completion event.
 - [ ] **Step 2: Run**
   Expected: FAIL.
 - [ ] **Step 3: Implement partial refresh**
