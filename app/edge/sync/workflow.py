@@ -60,12 +60,17 @@ class PolicyWorkflow:
                 "SELECT * FROM memory_policy WHERE logical_id=? ORDER BY revision DESC LIMIT 1",
                 (record.logical_id,),
             ).fetchone()
-            if record.revision == 1 and latest is not None:
-                raise ValueError("logical_id already has a persisted root revision")
-            if record.revision > 1 and latest is not None and latest["revision"] != record.parent_revision:
-                raise ValueError("stale persisted parent revision")
-            if record.revision > 1 and latest is None and record.parent_revision != record.revision - 1:
+            if record.revision > 1 and record.parent_revision != record.revision - 1:
                 raise ValueError("invalid revision parent")
+            backfilling_history = (
+                latest is not None
+                and record.revision < latest["revision"]
+                and state is SyncState.SUPERSEDED
+            )
+            if latest is not None and latest["revision"] >= record.revision and not backfilling_history:
+                raise ValueError("logical_id revision already has a different persisted identity")
+            if latest is not None and not backfilling_history and latest["revision"] > (record.parent_revision or 0):
+                raise ValueError("stale persisted parent revision")
 
             requested = record.requested_sync_policy.value if record.requested_sync_policy else None
             effective = decision.action.value

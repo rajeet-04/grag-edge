@@ -62,7 +62,10 @@ class MemoryService:
             return SyncState.AWAITING_APPROVAL
         return SyncState.QUEUED
 
-    def _commit_policy(self, record: MemoryRecord, event_type: str, deleted: bool = False) -> MemoryRecord:
+    def _commit_policy(
+        self, record: MemoryRecord, event_type: str, deleted: bool = False,
+        force_state: SyncState | None = None,
+    ) -> MemoryRecord:
         if self.policy_workflow is None:
             return record
         decision = (
@@ -70,7 +73,7 @@ class MemoryService:
             if deleted
             else self.policy_engine.evaluate(record)
         )
-        state = self._decision_state(record, decision)
+        state = force_state or self._decision_state(record, decision)
         self.policy_workflow.commit_record(record, decision, state, event_type)
         return self._overlay(record)
 
@@ -196,9 +199,20 @@ class MemoryService:
                 if point.payload.get("record_type") == "memory"
             ]
             records.sort(key=lambda record: (record.logical_id, record.revision, record.memory_id))
+            latest_by_logical: dict[str, int] = {}
+            for record in records:
+                latest_by_logical[record.logical_id] = max(
+                    latest_by_logical.get(record.logical_id, 0), record.revision
+                )
             for record in records:
                 if self.policy_workflow.get(record.memory_id) is None:
-                    self._commit_policy(record, "MEMORY_CREATED" if record.revision == 1 else "MEMORY_REVISED", deleted=record.is_deleted)
+                    is_superseded = record.revision < latest_by_logical[record.logical_id]
+                    self._commit_policy(
+                        record,
+                        "MEMORY_CREATED" if record.revision == 1 else "MEMORY_REVISED",
+                        deleted=record.is_deleted,
+                        force_state=SyncState.SUPERSEDED if is_superseded else None,
+                    )
 
     def list(self, **filters: Any) -> list[MemoryRecord]:
         current: dict[str, MemoryRecord] = {}
