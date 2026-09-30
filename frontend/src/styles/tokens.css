@@ -1,8 +1,19 @@
 :root {
+  color-scheme: dark;
+  --banner-warn-bg: #2a2210; --banner-bad-bg: #2a1512;
   --bg: #0b0d10; --surface: #12161b; --surface-2: #1a2027; --line: #2a323c;
   --text: #e8edf2; --muted: #9aa7b5; --accent: #f2b233; --ok: #4ecb8d; --warn: #f2b233; --bad: #ff6b5e; --info: #6cb6ff;
   --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+/* Light theme follows the OS preference (no toggle); every token pair is contrast-checked by e2e/a11y.e2e.ts. */
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f4f6f8; --surface: #ffffff; --surface-2: #eceff3; --line: #8c98a6;
+    --text: #12161b; --muted: #485463; --accent: #7a4f00; --ok: #0a6434; --warn: #7a4f00; --bad: #ad241b; --info: #0a58a8;
+    --banner-warn-bg: #fff4d6; --banner-bad-bg: #fde4e1;
+  }
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-ui); font-size: 14px; line-height: 1.45; }
@@ -21,8 +32,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .cell .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
 .cell .value { font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
 .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
-.banner { border: 1px solid var(--warn); background: #2a2210; padding: 10px 12px; border-radius: 6px; margin-bottom: 16px; }
-.banner.error { border-color: var(--bad); background: #2a1512; }
+.banner { border: 1px solid var(--warn); background: var(--banner-warn-bg); padding: 10px 12px; border-radius: 6px; margin-bottom: 16px; }
+.banner.error { border-color: var(--bad); background: var(--banner-bad-bg); }
 .empty { color: var(--muted); border: 1px dashed var(--line); padding: 16px; border-radius: 6px; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
 input, select, textarea, button { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; font: inherit; }
@@ -30,6 +41,10 @@ button { cursor: pointer; } button:hover { border-color: var(--accent); }
 .feed { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow: auto; }
 .feed li { border-bottom: 1px solid var(--line); padding: 6px 0; overflow-wrap: anywhere; }
 .card { border: 1px solid var(--line); border-radius: 6px; padding: 10px; margin-bottom: 8px; background: var(--surface-2); min-width: 0; }
-.card .content { overflow-wrap: anywhere; max-height: 8em; overflow: auto; white-space: pre-wrap; }
+.card .content { overflow-wrap: anywhere; white-space: pre-wrap; }
 .badge { display: inline-block; font-size: 11px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 3px; margin-right: 4px; }
 @media (prefers-reduced-motion: no-preference) { .cell, .card { transition: border-color .15s; } }
+.skip-link { position: absolute; left: 8px; top: -48px; z-index: 10; background: var(--surface); color: var(--text); padding: 8px 12px; border: 1px solid var(--line); border-radius: 4px; }
+.skip-link:focus { top: 8px; }
+main:focus { outline: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

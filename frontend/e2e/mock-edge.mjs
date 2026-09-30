@@ -8,11 +8,15 @@ const PORT = Number(process.env.MOCK_PORT ?? 4173);
 const DIST = new URL("../dist/", import.meta.url).pathname;
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml" };
 
-const state = { connectivity: "ONLINE", events: [], seq: 0, streams: new Set() };
+const state = { conflict: false, connectivity: "ONLINE", events: [], seq: 0, streams: new Set() };
 const MEMORY = {
   memory_id: "m-1", logical_id: "l-1", revision: 2, content: "Pump P-41 seal replaced by ROBOT-01",
   device_id: "ROBOT-01", source_type: "operator", sync_state: "SYNCHRONIZED", origin: "FLEET", confidence: 0.9,
 };
+
+const CONFLICT = { conflict_id: "conflict_abc123", logical_id: "l-1", local_memory_id: "m-1", fleet_memory_id: "m-2", status: "OPEN" };
+const FLEET_SIDE = { ...MEMORY, memory_id: "m-2", device_id: "ROBOT-01", content: "Pump P-41 seal replaced with type B" };
+const QUEUE = [{ memory_id: "m-9", status: "RETRY_WAIT", retry_count: 2, last_error: "ConnectionError: fleet unreachable" }];
 
 function emit(type, message) {
   const event = { event_id: String(++state.seq).padStart(6, "0"), event_type: type, message, device_id: "ROBOT-02",
@@ -41,7 +45,11 @@ createServer(async (req, res) => {
   if (p === "/api/v1/edge/memories") return json(res, [MEMORY]);
   if (p === "/api/v1/edge/search") return json(res, { results: [{ ...MEMORY, score: 0.03, dense_score: 0.9, sparse_score: 0.4 }] });
   if (p === "/api/v1/edge/sync/status") return json(res, { connectivity: { connectivity: state.connectivity }, pending: 0, queued: 0, retry_wait: 0, uploading: 0, uploaded: 0, snapshot_pending: 0, synchronized: 1, last_attempt_at: null });
-  if (p === "/api/v1/edge/sync/queue" || p === "/api/v1/edge/sync/history" || p === "/api/v1/edge/conflicts") return json(res, []);
+  if (p === "/__mock/conflict") { state.conflict = url.searchParams.get("on") === "1"; return json(res, { ok: true }); }
+  if (p === "/api/v1/edge/conflicts") return json(res, state.conflict ? [CONFLICT] : []);
+  if (p === "/api/v1/edge/conflicts/conflict_abc123") return json(res, { conflict: CONFLICT, local: MEMORY, fleet: FLEET_SIDE, history: [] });
+  if (p === "/api/v1/edge/sync/queue") return json(res, state.conflict ? QUEUE : []);
+  if (p === "/api/v1/edge/sync/history") return json(res, []);
   if (p.startsWith("/api/")) return json(res, { detail: "not found" }, 404);
   try {
     const file = normalize(join(DIST, p === "/" ? "index.html" : p));

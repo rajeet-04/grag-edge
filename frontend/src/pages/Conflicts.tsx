@@ -23,6 +23,8 @@ export default function Conflicts() {
   const [merged, setMerged] = useState("");
   const [error, setError] = useState<string | null>(null);
   const alive = useRef(true);
+  const panel = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (detail) panel.current?.focus(); }, [detail]);
   useEffect(() => () => { alive.current = false; }, []);
 
   const load = useCallback(async () => {
@@ -54,7 +56,7 @@ export default function Conflicts() {
         {items?.map((c) => <button key={c.conflict_id} onClick={() => open(c.conflict_id)} className="mono">{c.conflict_id}</button>)}
       </div>
       {detail && (
-        <div className="panel">
+        <div className="panel" ref={panel} tabIndex={-1} role="region" aria-label="Resolve conflict">
           <h2>Resolve <span className="mono">{detail.conflict.conflict_id}</span></h2>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 8 }}>
             <Side title="Local" m={detail.local} />

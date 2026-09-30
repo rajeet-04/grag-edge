@@ -16,13 +16,14 @@ const DESTINATIONS = [
 export default function App() {
   return (
     <div className="shell">
+      <a className="skip-link" href="#main" onClick={(e) => { e.preventDefault(); document.getElementById("main")?.focus(); }}>Skip to main content</a>
       <nav className="nav" aria-label="Primary">
         <h1>GRAG Edge</h1>
         {DESTINATIONS.map((d) => (
           <NavLink key={d.to} to={d.to} end={d.end}>{d.label}</NavLink>
         ))}
       </nav>
-      <main>
+      <main id="main" tabIndex={-1}>
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/search" element={<Search />} />

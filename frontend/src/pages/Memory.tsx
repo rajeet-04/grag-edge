@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { MemoryFilters, MemoryRecord } from "../api/types";
 import MemoryDetail from "../components/MemoryDetail";
@@ -12,6 +12,7 @@ export default function Memory() {
   const [rows, setRows] = useState<MemoryRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<MemoryRecord | null>(null);
+  const opener = useRef<HTMLElement | null>(null);
 
   const load = useCallback(async (filters: MemoryFilters) => {
     try {
@@ -48,18 +49,18 @@ export default function Memory() {
         </div>
       </div>
       {error && <div className="banner error" role="alert">Could not load memories: {error}</div>}
-      {selected && <MemoryDetail record={selected} onClose={() => setSelected(null)} />}
+      {selected && <MemoryDetail record={selected} onClose={() => { setSelected(null); opener.current?.focus(); }} />}
       {rows && rows.length === 0 && <p className="empty">No memories match these filters. Clear a filter, or wait for new observations to be recorded.</p>}
       {rows?.map((r) => (
-        <article key={r.memory_id} className="card" data-testid="memory-row" tabIndex={0} role="button"
-          onClick={() => open(r)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(r); } }}>
+        <div key={r.memory_id} className="card" data-testid="memory-row" tabIndex={0} role="button"
+          onClick={(e) => { opener.current = e.currentTarget; open(r); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); opener.current = e.currentTarget; open(r); } }}>
           <div className="row">
             <span className="badge">{r.sync_state}</span><span className="badge">{r.memory_type}</span>
             <span className="badge">rev {r.revision}</span><span className="badge">{r.device_id}</span>
           </div>
           <div className="content">{r.content}</div>
           <div className="mono" style={{ color: "var(--muted)" }}>{r.memory_id}</div>
-        </article>
+        </div>
       ))}
     </div>
   );

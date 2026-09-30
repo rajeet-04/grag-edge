@@ -5,7 +5,7 @@ export default function ActivityFeed({ events }: { events: ActivityEvent[] }) {
     return <p className="empty">No activity yet. Memory, sync and conflict events will appear here as they happen.</p>;
   }
   return (
-    <ul className="feed">
+    <ul className="feed" tabIndex={0} aria-label="Live activity feed">
       {events.map((e) => (
         <li key={e.event_id}>
           <span className="badge mono">{e.event_type}</span>

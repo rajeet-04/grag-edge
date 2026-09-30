@@ -1,10 +1,10 @@
 import type { EdgeStats, EdgeStatus } from "../api/types";
 
-function Cell({ label, value, tone, id }: { label: string; value: string | number; tone?: string; id?: string }) {
+function Cell({ label, value, tone, id, live }: { label: string; value: string | number; tone?: string; id?: string; live?: boolean }) {
   return (
     <div className="cell">
       <div className="label">{label}</div>
-      <div className={`value ${tone ?? ""}`} data-testid={id}>{value}</div>
+      <div className={`value ${tone ?? ""}`} data-testid={id} aria-live={live ? "polite" : undefined}>{value}</div>
     </div>
   );
 }
@@ -18,7 +18,7 @@ export default function StatusRail({ status, stats, live }: { status: EdgeStatus
       <Cell label="Edge state" value={ready ? "READY" : status ? status.status : "UNAVAILABLE"} tone={ready ? "ok" : "bad"} />
       <Cell label="Local AI" value={ready ? "LOCAL" : "—"} tone={ready ? "ok" : undefined} />
       <Cell label="Qdrant Edge" value={ready ? "OPEN" : "—"} tone={ready ? "ok" : undefined} />
-      <Cell label="Fleet link" value={link} tone={link === "ONLINE" ? "ok" : "warn"} id="fleet-link" />
+      <Cell label="Fleet link" value={link} tone={link === "ONLINE" ? "ok" : "warn"} id="fleet-link" live />
       <Cell label="Pending sync" value={stats?.pending_sync ?? "—"} tone={stats && stats.pending_sync > 0 ? "warn" : undefined} id="pending-sync" />
       <Cell label="Conflicts" value={stats?.open_conflict_count ?? "—"} tone={stats && stats.open_conflict_count > 0 ? "bad" : undefined} id="conflicts" />
       <Cell label="Live feed" value={live ? "CONNECTED" : "RECONNECTING"} tone={live ? "ok" : "warn"} />

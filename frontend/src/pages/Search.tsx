@@ -50,6 +50,7 @@ export default function Search() {
       {error && <div className="banner error" role="alert">Request failed: {error}</div>}
       {answer !== null && <div className="panel"><h2>Answer</h2><div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{answer}</div></div>}
       {hits && hits.length === 0 && <p className="empty">No matching memories. Try different words, or check the Memory page for what is stored.</p>}
+      <div aria-live="polite">{hits !== null && hits.length > 0 && <span className="sr-only">{hits.length} results</span>}</div>
       {hits?.map((h) => <EvidenceCard key={`${h.origin}:${h.memory_id}`} hit={h} advanced={advanced} />)}
     </div>
   );
