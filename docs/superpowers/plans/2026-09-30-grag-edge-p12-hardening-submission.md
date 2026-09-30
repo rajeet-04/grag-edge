@@ -49,18 +49,18 @@
 
 **Files:**
 - Create: `tests/performance/test_edge_targets.py`
-- Modify: `app/edge/api/operations.py`
-- Modify: `app/edge/state/sqlite.py`
+- Modify only if gaps are found: `app/edge/api/operations.py`
+- Modify only if gaps are found: `app/edge/state/sqlite.py`
 - Test: `tests/edge/api/test_activity.py`
 
 **Interfaces:**
-- `GET /api/v1/edge/stats` exposes local/fleet counts, pending sync, conflicts, last sync, last fleet refresh, search latency, origin counts, sync success/failure, connectivity.
-- `GET /api/v1/edge/events` emits ActivityEvent records defined by the spec.
+- Verify `GET /api/v1/edge/stats` already exposes local/fleet counts, pending sync, conflicts, last sync, last fleet refresh, search latency, origin counts, sync success/failure, and connectivity.
+- Verify `GET /api/v1/edge/events` already streams persisted ActivityEvent records from prior phases and supports reconnect without duplication.
 
 - [ ] **Step 1: Write metrics/event/performance assertions**
 - [ ] **Step 2: Run**
   Expected: FAIL for missing metrics or target regressions.
-- [ ] **Step 3: Fill observability gaps and optimize only measured bottlenecks**
+- [ ] **Step 3: Fix only verified observability gaps and optimize only measured bottlenecks**
 - [ ] **Step 4: Verify targets on the deterministic demo dataset**
 - [ ] **Step 5: Commit**
   Commit: `perf: verify edge operation targets`
