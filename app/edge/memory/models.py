@@ -64,8 +64,10 @@ class MemoryRecord(BaseModel):
     confidence: float | None = None
     importance: Importance = Importance.NORMAL
     sensitivity: Sensitivity = Sensitivity.FLEET_SAFE
+    requested_sync_policy: SyncPolicy | None = None
     sync_policy: SyncPolicy = SyncPolicy.LOCAL_ONLY
     sync_state: SyncState = SyncState.LOCAL_DIRTY
+    sync_reason_codes: tuple[str, ...] = ()
     source_type: str | None = None
     source_id: str | None = None
     tags: list[str] = Field(default_factory=list)
