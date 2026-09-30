@@ -55,3 +55,14 @@ test("Ask GRAG mode calls the chat endpoint", async () => {
   await waitFor(() => expect(api.ask).toHaveBeenCalledWith("what next?"));
   expect(await screen.findByText("Close valve B first.")).toBeInTheDocument();
 });
+
+test("Ask GRAG renders markdown answers instead of raw text", async () => {
+  vi.mocked(api.ask).mockResolvedValue("## Steps\n\n1. **Close** valve B\n2. Open valve C");
+  render(<Search />);
+  await userEvent.click(screen.getByRole("radio", { name: /ask grag/i }));
+  await userEvent.type(screen.getByRole("searchbox"), "what next?");
+  await userEvent.click(screen.getByRole("button", { name: /^ask$/i }));
+  expect(await screen.findByRole("heading", { name: "Steps" })).toBeInTheDocument();
+  expect(screen.getAllByRole("listitem")).toHaveLength(2);
+  expect(screen.getByText("Close").tagName).toBe("STRONG");
+});

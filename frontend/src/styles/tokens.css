@@ -210,3 +210,38 @@ main:focus { outline: none; }
 .route-bar { position: fixed; left: 0; top: 0; width: 100%; height: 2px; background: var(--accent); transform: scaleX(0); transform-origin: left; pointer-events: none; z-index: 20; }
 .rail-status { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 @media (max-width: 720px) { .rail-status { grid-template-columns: repeat(2, 1fr); } }
+
+/* Ask GRAG answer: model markdown rendered in the console's voice. Measure capped for readability. */
+.answer-md { max-width: 74ch; overflow-wrap: anywhere; line-height: 1.6; }
+.answer-md > :first-child { margin-top: 0; } .answer-md > :last-child { margin-bottom: 0; }
+.answer-md p { margin: 0 0 .85em; }
+.answer-md h3, .answer-md h4, .answer-md h5 { font-family: var(--font-mono); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 1.5em 0 .55em; padding-bottom: 5px; border-bottom: 1px solid var(--line-soft); }
+.answer-md h4, .answer-md h5 { border-bottom: 0; padding-bottom: 0; }
+.answer-md strong { font-weight: 650; }
+.answer-md ul, .answer-md ol { margin: 0 0 .9em; padding-left: 1.5em; }
+.answer-md li { margin: .25em 0; padding-left: .2em; } .answer-md li::marker { color: var(--accent); }
+.answer-md li > p { margin: 0 0 .3em; }
+.answer-md a { color: var(--info); text-underline-offset: 3px; }
+.answer-md blockquote { margin: 0 0 .9em; padding: 2px 0 2px 12px; border-left: 2px solid var(--line); color: var(--muted); }
+.answer-md hr { border: 0; border-top: 1px solid var(--line-soft); margin: 1.2em 0; }
+.answer-md code.md-inline { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 3px; padding: 1px 5px; }
+.answer-md pre { margin: 0 0 1em; padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 4px; overflow-x: auto; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; white-space: pre; }
+.answer-md pre code { font: inherit; overflow-wrap: normal; }
+.md-table { overflow-x: auto; margin: 0 0 1em; border: 1px solid var(--line-soft); border-radius: 4px; }
+.md-table table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.md-table th, .md-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+.md-table th { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); background: var(--surface-2); white-space: nowrap; }
+.md-table tr:last-child td { border-bottom: 0; }
+.md-figure { margin: 0 0 1em; border: 1px solid var(--line-soft); border-radius: 6px; background: var(--surface); position: relative; }
+.md-figure::before { content: ""; position: absolute; left: 12px; top: -1px; width: 18px; height: 2px; background: var(--accent); }
+.md-diagram-scroll { overflow-x: auto; padding: 14px 12px 6px; max-width: 100%; }
+.md-diagram { display: flex; justify-content: center; min-width: min-content; }
+.md-diagram svg { flex: none; }
+.md-figure figcaption { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 12px 8px; font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
+.md-toggle { font: inherit; letter-spacing: .06em; padding: 2px 8px; }
+.md-figure > pre { margin: 0; border-width: 1px 0 0; border-radius: 0 0 6px 6px; }
+.md-diagram-loading { padding: 18px 12px; font-size: 12px; }
+.md-note { margin: -.4em 0 1em; font-size: 12px; }
+/* mermaid measures text inside this node; the global reduced-motion clamp must not touch it. */
+.md-scratch { position: absolute; left: -9999px; top: 0; }
+.md-scratch, .md-scratch * { transition: none !important; animation: none !important; }

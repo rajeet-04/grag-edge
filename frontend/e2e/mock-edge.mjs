@@ -18,6 +18,8 @@ const CONFLICT = { conflict_id: "conflict_abc123", logical_id: "l-1", local_memo
 const FLEET_SIDE = { ...MEMORY, memory_id: "m-2", device_id: "ROBOT-01", content: "Pump P-41 seal replaced with type B" };
 const QUEUE = [{ memory_id: "m-9", status: "RETRY_WAIT", retry_count: 2, last_error: "ConnectionError: fleet unreachable" }];
 
+const ANSWER = "Based on the provided data...\n\n**Equipment Status & Observations:**\n*  **Pump P-41:** Currently experiencing fluctuating discharge pressure.\n*  **Compressor C-17:** Oil level nominal.\n\n## Reasoning Steps\n\n1. Identify equipment -> Categorize -> Synthesize\n\n## Graph Reasoning Path\n```mermaid\ngraph TD\n    A[User Query] --> B[Scan_Context]\n    B --> C[Identify_Equipment]\n    C --> D[Extract_Status]\n    D --> E[Identify_Procedures]\n    E --> F[Synthesize_Answer]\n    F --> G[Final_Response]\n```\n";
+
 function emit(type, message) {
   const event = { event_id: String(++state.seq).padStart(6, "0"), event_type: type, message, device_id: "ROBOT-02",
     timestamp: new Date().toISOString() };
@@ -32,6 +34,7 @@ createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
   const p = url.pathname;
   if (p === "/__mock/connectivity") { state.connectivity = url.searchParams.get("state"); emit(state.connectivity === "OFFLINE" ? "CLOUD_LINK_DOWN" : "CLOUD_LINK_UP", "link " + state.connectivity); return json(res, { ok: true }); }
+  if (p === "/v1/chat/completions") return json(res, { choices: [{ message: { role: "assistant", content: ANSWER } }] });
   if (p === "/api/v1/edge/events") {
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
     res.write(": open\n\n");

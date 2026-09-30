@@ -67,3 +67,24 @@ test.describe("reduced motion", () => {
     await setLink(page, "ONLINE");
   });
 });
+
+test("Ask GRAG renders markdown and a real mermaid diagram without console errors", async ({ page }) => {
+  const problems: string[] = [];
+  page.on("pageerror", (e) => problems.push(String(e)));
+  page.on("console", (m) => { if (m.type() === "error") problems.push(m.text()); });
+  await page.goto("/search");
+  await page.getByLabel("Ask GRAG").check();
+  await page.getByLabel("Query").fill("status?");
+  await page.getByRole("button", { name: "Ask" }).click();
+  await expect(page.getByRole("heading", { name: "Reasoning Steps" })).toBeVisible();
+  await expect(page.locator(".answer-md ul li")).toHaveCount(2);
+  await expect(page.locator(".answer-md strong").first()).toBeVisible();
+  const figure = page.getByRole("figure");
+  await expect(figure.locator("svg")).toBeVisible();
+  await expect(figure).toContainText("Graph reasoning path");
+  await expect(figure).toContainText("Final_Response");
+  await expect(page.locator("pre", { hasText: "graph TD" })).toHaveCount(0);
+  await figure.getByRole("button", { name: "View source" }).click();
+  await expect(figure.locator("pre")).toContainText("graph TD");
+  expect(problems).toEqual([]);
+});

@@ -1,9 +1,11 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, lazy, Suspense, useState } from "react";
 import { api } from "../api/client";
 import type { SearchHit } from "../api/types";
 import EvidenceCard from "../components/EvidenceCard";
 import { SegmentBar } from "../components/QueueMeter";
 import { SkeletonCards } from "../components/Skeleton";
+
+const AnswerMarkdown = lazy(() => import("../components/AnswerMarkdown")); // markdown + mermaid stay out of the main bundle
 
 export default function Search() {
   const [mode, setMode] = useState<"memory" | "ask">("memory");
@@ -52,7 +54,7 @@ export default function Search() {
       </form>
       {error && <div className="banner error" role="alert">Request failed: {error}</div>}
       {busy && <SkeletonCards count={mode === "ask" ? 1 : 3} h={mode === "ask" ? 110 : 132} />}
-      {!busy && answer !== null && <div className="panel enter"><h2>Answer</h2><div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{answer}</div></div>}
+      {!busy && answer !== null && <div className="panel enter"><h2>Answer</h2><Suspense fallback={<SkeletonCards count={1} h={110} />}><AnswerMarkdown text={answer} /></Suspense></div>}
       {!busy && hits && hits.length === 0 && <p className="empty">No matching memories. Try different words, or check the Memory page for what is stored.</p>}
       <div aria-live="polite">
         {!busy && hits !== null && hits.length > 0 && (

@@ -12,6 +12,12 @@ const PAGES = [
       await expect(page.getByTestId("evidence-card")).toBeVisible();
       await page.getByLabel("Advanced scores").check();
     } },
+  { name: "ask answer", path: "/search", prepare: async (page: Page) => {
+      await page.getByLabel("Ask GRAG").check();
+      await page.getByLabel("Query").fill("status?");
+      await page.getByRole("button", { name: "Ask" }).click();
+      await expect(page.getByRole("figure").locator("svg").first()).toBeVisible();
+    } },
   { name: "memory", path: "/memory" },
   { name: "memory detail", path: "/memory", prepare: async (page: Page) => {
       await page.getByTestId("memory-row").first().click();
