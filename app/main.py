@@ -51,23 +51,32 @@ async def lifespan(app: FastAPI):
         ollama_url=settings.ollama_base_url,
     )
 
+    from app.edge.runtime import EdgeRuntime
+    edge_runtime = EdgeRuntime()
+    app.state.edge_runtime = edge_runtime
+
     from app.database.neo4j_client import get_neo4j_client
     from app.schemas.graph_schema import init_graph_schema
 
     neo4j_client = get_neo4j_client()
-    connected = await neo4j_client.verify_connectivity()
-
-    if connected:
-        logger.info("app.neo4j.connected")
-        schema_results = await init_graph_schema()
-        logger.info("app.schema.initialized", results=schema_results)
-    else:
-        logger.warning("app.neo4j.not_connected")
-
-    yield
-
-    await neo4j_client.close()
-    logger.info("app.shutdown")
+    try:
+        connected = await neo4j_client.verify_connectivity()
+        if connected:
+            logger.info("app.neo4j.connected")
+            schema_results = await init_graph_schema()
+            logger.info("app.schema.initialized", results=schema_results)
+        else:
+            logger.warning("app.neo4j.not_connected")
+        yield
+    finally:
+        try:
+            await neo4j_client.close()
+        finally:
+            try:
+                await edge_runtime.close()
+            finally:
+                app.state.edge_runtime = None
+                logger.info("app.shutdown")
 
 
 app = FastAPI(
@@ -89,6 +98,8 @@ app.add_middleware(
 app.include_router(ingestion_router, prefix="/api/v1", tags=["ingestion"])
 app.include_router(review_queue_router, prefix="/api/v1", tags=["review-queue"])
 app.include_router(openai_router, prefix="/v1", tags=["openai"])
+from app.edge.api.memories import router as edge_router
+app.include_router(edge_router, prefix="/api/v1")
 
 
 @app.get("/health", response_model=HealthStatus)
