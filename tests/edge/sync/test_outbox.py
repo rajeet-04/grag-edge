@@ -102,15 +102,31 @@ def test_legacy_attempt_table_migrates_without_losing_history(tmp_path: Path):
 
     path = tmp_path / "legacy.db"
     conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE sync_outbox(id TEXT PRIMARY KEY,memory_id TEXT NOT NULL UNIQUE,logical_id TEXT NOT NULL,revision INTEGER NOT NULL,status TEXT NOT NULL,retry_count INTEGER NOT NULL DEFAULT 0,last_error TEXT,next_attempt_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(logical_id,revision))")
     conn.execute("CREATE TABLE sync_attempts(id TEXT PRIMARY KEY,outbox_id TEXT NOT NULL,attempt_number INTEGER NOT NULL,error TEXT,created_at TEXT NOT NULL,UNIQUE(outbox_id,attempt_number))")
-    conn.execute("INSERT INTO sync_attempts VALUES('attempt-1','outbox-1',1,'network timeout','2026-09-30T00:00:00+00:00')")
+    for outbox_id, status in (("outbox-uploaded", "UPLOADED"), ("outbox-cancelled", "CANCELLED"), ("outbox-active", "UPLOADING"), ("outbox-retry", "RETRY_WAIT")):
+        conn.execute("INSERT INTO sync_outbox VALUES(?,?,?,?,?,0,NULL,NULL,?,?)", (outbox_id, f"memory-{outbox_id}", outbox_id, 1, status, "2026-09-29T00:00:00+00:00", "2026-09-30T00:00:00+00:00"))
+    legacy_rows = [
+        ("attempt-success-unknown", "outbox-uploaded", None),
+        ("attempt-cancel-unknown", "outbox-cancelled", None),
+        ("attempt-interrupted-unknown", "outbox-active", None),
+        ("attempt-old-retry", "outbox-retry", "interrupted upload recovered"),
+    ]
+    for attempt_id, outbox_id, error in legacy_rows:
+        conn.execute("INSERT INTO sync_attempts VALUES(?,?,1,?,?)", (attempt_id, outbox_id, error, "2026-09-30T00:00:00+00:00"))
     conn.commit()
     conn.close()
 
     db = EdgeStateDB(path)
     columns = {row["name"] for row in db._connection.execute("PRAGMA table_info(sync_attempts)")}
-    row = db._connection.execute("SELECT * FROM sync_attempts WHERE id='attempt-1'").fetchone()
     assert {"started_at", "finished_at", "result"} <= columns
-    assert row["started_at"] == "2026-09-30T00:00:00+00:00"
-    assert row["finished_at"] == row["started_at"] and row["result"] == "FAILED"
+    rows = db._connection.execute("SELECT * FROM sync_attempts ORDER BY id").fetchall()
+    assert len(rows) == len(legacy_rows)
+    assert all(row["created_at"] == "2026-09-30T00:00:00+00:00" for row in rows)
+    assert all(row["started_at"] is None and row["finished_at"] is None for row in rows)
+    assert all(row["result"] == "LEGACY_UNKNOWN" for row in rows)
+    assert {row["outbox_id"]: row["status"] for row in db._connection.execute("SELECT id AS outbox_id,status FROM sync_outbox")} == {
+        "outbox-uploaded": "UPLOADED", "outbox-cancelled": "CANCELLED", "outbox-active": "UPLOADING", "outbox-retry": "RETRY_WAIT"
+    }
+    assert next(row["error"] for row in rows if row["id"] == "attempt-old-retry") == "interrupted upload recovered"
     db.close()

@@ -42,3 +42,7 @@ Focused tests were RED (3 failures) because attempt rows lacked `started_at`, `f
 - `UV_CACHE_DIR=/private/tmp/grag-edge-uv-cache uv run pytest tests/edge -q`: **91 passed, 1 skipped**.
 - `PATH=/private/tmp/grag-edge-runtime/bin:$PATH DOCKER_HOST=tcp://127.0.0.1:23750 UV_CACHE_DIR=/private/tmp/grag-edge-uv-cache make baseline-check`: exit 0, **291 passed, 2 skipped, exact 10 known imported failures**; baseline validator reported no regression.
 - Repeated both gates from a clean `git archive` of commit `bd1d5b5`, excluding in-progress P06 working-tree files: edge suite **91 passed, 1 skipped**; baseline validator **291 passed, 2 skipped, exact same 10 known imported failures**, no regression.
+
+## Legacy history migration correction
+
+A migration regression was RED because the first migration inferred attempt outcomes and timestamps from legacy `error`/outbox status. Those fields cannot reliably recover when an attempt started or ended, so the migration now preserves legacy `created_at`, `error`, and outbox status while marking the result `LEGACY_UNKNOWN` and leaving `started_at`/`finished_at` null. New attempts still record complete lifecycle data.
