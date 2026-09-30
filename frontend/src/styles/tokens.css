@@ -1,0 +1,35 @@
+:root {
+  --bg: #0b0d10; --surface: #12161b; --surface-2: #1a2027; --line: #2a323c;
+  --text: #e8edf2; --muted: #9aa7b5; --accent: #f2b233; --ok: #4ecb8d; --warn: #f2b233; --bad: #ff6b5e; --info: #6cb6ff;
+  --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-ui); font-size: 14px; line-height: 1.45; }
+.shell { display: grid; grid-template-columns: 200px 1fr; min-height: 100vh; }
+.nav { background: var(--surface); border-right: 1px solid var(--line); padding: 16px 8px; display: flex; flex-direction: column; gap: 4px; }
+.nav h1 { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); margin: 0 8px 16px; }
+.nav a { color: var(--muted); text-decoration: none; padding: 8px 10px; border-radius: 4px; border-left: 3px solid transparent; }
+.nav a.active { color: var(--text); background: var(--surface-2); border-left-color: var(--accent); }
+main { padding: 20px; min-width: 0; }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+.mono { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px; margin-bottom: 16px; min-width: 0; }
+.panel h2 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+.rail { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 16px; }
+.cell { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 10px; min-width: 0; }
+.cell .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.cell .value { font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+.banner { border: 1px solid var(--warn); background: #2a2210; padding: 10px 12px; border-radius: 6px; margin-bottom: 16px; }
+.banner.error { border-color: var(--bad); background: #2a1512; }
+.empty { color: var(--muted); border: 1px dashed var(--line); padding: 16px; border-radius: 6px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+input, select, textarea, button { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; font: inherit; }
+button { cursor: pointer; } button:hover { border-color: var(--accent); }
+.feed { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow: auto; }
+.feed li { border-bottom: 1px solid var(--line); padding: 6px 0; overflow-wrap: anywhere; }
+.card { border: 1px solid var(--line); border-radius: 6px; padding: 10px; margin-bottom: 8px; background: var(--surface-2); min-width: 0; }
+.card .content { overflow-wrap: anywhere; max-height: 8em; overflow: auto; white-space: pre-wrap; }
+.badge { display: inline-block; font-size: 11px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 3px; margin-right: 4px; }
+@media (prefers-reduced-motion: no-preference) { .cell, .card { transition: border-color .15s; } }
