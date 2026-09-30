@@ -34,7 +34,8 @@ async def reject(memory_id: str, request: Request):
 def queue(request: Request, limit: int = 100):
     if limit < 1 or limit > 500:
         raise HTTPException(422, "limit must be between 1 and 500")
-    return runtime(request).outbox.pending(limit)
+    return [item for item in runtime(request).outbox.all()
+        if item.status in ("QUEUED","RETRY_WAIT","UPLOADING","UPLOADED","SNAPSHOT_PENDING")][:limit]
 
 
 @router.get("/status")
@@ -44,11 +45,13 @@ def status(request: Request):
     attempts = edge.state_db._connection.execute("SELECT MAX(created_at) AS latest FROM sync_attempts").fetchone()
     return {
         "connectivity": edge.connectivity.current(),
-        "pending": sum(item.status in ("QUEUED", "RETRY_WAIT", "UPLOADING") for item in items),
+        "pending": sum(item.status in ("QUEUED", "RETRY_WAIT", "UPLOADING", "UPLOADED", "SNAPSHOT_PENDING") for item in items),
         "queued": sum(item.status == "QUEUED" for item in items),
         "retry_wait": sum(item.status == "RETRY_WAIT" for item in items),
         "uploading": sum(item.status == "UPLOADING" for item in items),
         "uploaded": sum(item.status == "UPLOADED" for item in items),
+        "snapshot_pending": sum(item.status == "SNAPSHOT_PENDING" for item in items),
+        "synchronized": sum(item.status == "SYNCHRONIZED" for item in items),
         "last_attempt_at": attempts["latest"],
     }
 
@@ -57,3 +60,10 @@ def status(request: Request):
 async def run(request: Request):
     scheduled = runtime(request).trigger_sync()
     return {"status": "SCHEDULED" if scheduled else "RUNNING"}
+
+
+@router.get("/history")
+def history(request: Request, limit: int = 100):
+    if not 1 <= limit <= 500:
+        raise HTTPException(422, "limit must be between 1 and 500")
+    return runtime(request).sync.history(limit)

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from uuid import NAMESPACE_URL, uuid5
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -21,13 +23,17 @@ class SyncRunResult:
     failed: int = 0
     skipped: int = 0
     pending: int = 0
+    synchronized: int = 0
+    snapshot_pending: int = 0
+    refresh_error: str | None = None
 
 
 class SyncService:
-    def __init__(self, store: Any, memories: Any, outbox: SyncOutbox, db: EdgeStateDB, activity: ActivityLog, remote: Any, device_id: str, embedding_dimension: int = 768, batch_size: int = 50):
+    def __init__(self, store: Any, memories: Any, outbox: SyncOutbox, db: EdgeStateDB, activity: ActivityLog, remote: Any, device_id: str, embedding_dimension: int = 768, batch_size: int = 50, snapshots: Any | None = None):
         self.store, self.memories, self.outbox = store, memories, outbox
         self.db, self.activity, self.remote = db, activity, remote
         self.device_id, self.embedding_dimension, self.batch_size = device_id, embedding_dimension, batch_size
+        self.snapshots = snapshots
         self._run_lock = asyncio.Lock()
 
     @staticmethod
@@ -77,12 +83,13 @@ class SyncService:
             return SyncRunResult("RUNNING", pending=len(self.outbox.pending(self.batch_size)))
         async with self._run_lock:
             items = self.outbox.claimable(self.batch_size)
-            if not items:
+            if not items and self.snapshots is None:
                 return SyncRunResult("IDLE", pending=len(self.outbox.pending(self.batch_size)))
             health = await self._blocking(self.remote.health) if hasattr(self.remote, "health") else CloudHealth.ONLINE
             if health is not CloudHealth.ONLINE and str(health) != CloudHealth.ONLINE.value:
                 return SyncRunResult(str(health), pending=len(self.outbox.pending(self.batch_size)))
-            self._event("SYNC_STARTED", "Queued memories are being synchronized", metadata={"count": len(items)})
+            if items:
+                self._event("SYNC_STARTED", "Queued memories are being synchronized", metadata={"count": len(items)})
             try:
                 await self._blocking(self.remote.ensure_collection, self.embedding_dimension)
             except Exception as exc:
@@ -140,7 +147,118 @@ class SyncService:
                     self._event("SYNC_RETRY", "Remote upload failed; retry scheduled", item.memory_id,
                         {"attempt": retry.retry_count, "error": retry.last_error, "next_attempt_at": retry.next_attempt_at.isoformat() if retry.next_attempt_at else None})
                     failed += 1
+            if self.snapshots is not None:
+                return await self._refresh_and_confirm(uploaded, failed, skipped)
             return SyncRunResult("COMPLETED" if failed == 0 else "DEGRADED", uploaded, failed, skipped, len(self.outbox.pending(self.batch_size)))
+
+    def history(self, limit: int = 100) -> list[dict[str, Any]]:
+        if not 1 <= limit <= 500:
+            raise ValueError("limit must be between 1 and 500")
+        with self.db._lock:
+            rows = self.db._connection.execute(
+                "SELECT value FROM sync_checkpoints WHERE checkpoint_id LIKE 'sync-run:%' ORDER BY updated_at DESC,checkpoint_id LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [json.loads(row["value"]) for row in rows]
+
+    def _pending_runs(self) -> list[dict[str, Any]]:
+        with self.db._lock:
+            rows = self.db._connection.execute(
+                "SELECT value FROM sync_checkpoints WHERE checkpoint_id LIKE 'sync-run:%' ORDER BY updated_at,checkpoint_id"
+            ).fetchall()
+        return [run for row in rows if (run := json.loads(row["value"]))["status"] == SyncState.SNAPSHOT_PENDING.value]
+
+    def _register_acknowledged_run(self) -> None:
+        """Durably group acknowledged revisions; restart cannot create a second run."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self.db.transaction() as conn:
+            existing = [json.loads(row["value"]) for row in conn.execute(
+                "SELECT value FROM sync_checkpoints WHERE checkpoint_id LIKE 'sync-run:%'"
+            )]
+            assigned = {entry["outbox_id"] for run in existing for entry in run["acknowledged"]}
+            rows = [row for row in conn.execute(
+                "SELECT * FROM sync_outbox WHERE status IN ('UPLOADED','SNAPSHOT_PENDING') ORDER BY created_at,id"
+            ) if row["id"] not in assigned]
+            if not rows:
+                return
+            entries = []
+            for row in rows:
+                point = self.store.retrieve(row["memory_id"])
+                entries.append({"outbox_id": row["id"], "memory_id": row["memory_id"],
+                    "logical_id": row["logical_id"], "revision": row["revision"],
+                    "content_hash": point.payload.get("content_hash") if point else None})
+                conn.execute("UPDATE sync_outbox SET status='SNAPSHOT_PENDING',updated_at=? WHERE id=?", (now,row["id"]))
+                conn.execute("UPDATE memory_policy SET sync_state='SNAPSHOT_PENDING',updated_at=? WHERE memory_id=?", (now,row["memory_id"]))
+            run_id = str(uuid5(NAMESPACE_URL, "grag-sync:" + ":".join(sorted(row["id"] for row in rows))))
+            run = {"run_id":run_id,"status":SyncState.SNAPSHOT_PENDING.value,"acknowledged":entries,
+                "started_at":min(row["created_at"] for row in rows),"updated_at":now,"completed_at":None}
+            conn.execute("INSERT INTO sync_checkpoints(checkpoint_id,value,updated_at) VALUES(?,?,?)",
+                ("sync-run:"+run_id,json.dumps(run,sort_keys=True),now))
+
+    def _confirmed_checkpoint(self, result) -> dict[str, Any]:
+        with self.db._lock:
+            row = self.db._connection.execute("SELECT value FROM sync_checkpoints WHERE checkpoint_id='fleet'").fetchone()
+        checkpoint = json.loads(row["value"]) if row else None
+        if not checkpoint or not result.generation or not result.refresh_id or checkpoint.get("generation") != result.generation or checkpoint.get("refresh_id") != result.refresh_id:
+            raise RuntimeError("Fleet refresh has no matching durable generation checkpoint")
+        metadata = getattr(self.store, "fleet_snapshot_metadata", None)
+        if metadata is not None:
+            active = metadata()
+            if not active or active.get("generation") != checkpoint["generation"] or active.get("refresh_id") != checkpoint["refresh_id"]:
+                raise RuntimeError("Fleet checkpoint does not describe the active generation")
+        return checkpoint
+
+    def _complete_confirmed_runs(self, checkpoint: dict[str, Any]) -> int:
+        synchronized = 0
+        for run in self._pending_runs():
+            for entry in run["acknowledged"]:
+                point = self.store.retrieve_fleet(entry["memory_id"])
+                payload = point.payload if point else {}
+                if not point or point.id != entry["memory_id"] or payload.get("record_type") != "memory" or not entry["content_hash"] or any(
+                    payload.get(key) != entry[key] for key in ("memory_id","logical_id","revision","content_hash")
+                ):
+                    break
+            else:
+                now = datetime.now(timezone.utc)
+                with self.db.transaction() as conn:
+                    row = conn.execute("SELECT value FROM sync_checkpoints WHERE checkpoint_id=?", ("sync-run:"+run["run_id"],)).fetchone()
+                    current = json.loads(row["value"])
+                    if current["status"] == SyncState.SYNCHRONIZED.value:
+                        continue
+                    for entry in current["acknowledged"]:
+                        conn.execute("UPDATE sync_outbox SET status='SYNCHRONIZED',updated_at=? WHERE id=? AND status='SNAPSHOT_PENDING'", (now.isoformat(),entry["outbox_id"]))
+                        conn.execute("UPDATE memory_policy SET sync_state='SYNCHRONIZED',updated_at=? WHERE memory_id=?", (now.isoformat(),entry["memory_id"]))
+                    current.update(status=SyncState.SYNCHRONIZED.value,completed_at=now.isoformat(),updated_at=now.isoformat(),
+                        fleet_generation=checkpoint["generation"],fleet_refresh_id=checkpoint["refresh_id"],last_error=None)
+                    conn.execute("UPDATE sync_checkpoints SET value=?,updated_at=? WHERE checkpoint_id=?", (json.dumps(current,sort_keys=True),now.isoformat(),"sync-run:"+run["run_id"]))
+                    ActivityLog.append_in_transaction(conn,ActivityEvent(
+                        event_id=str(uuid5(NAMESPACE_URL,"sync-completed:"+run["run_id"])),event_type="SYNC_COMPLETED",
+                        device_id=self.device_id,timestamp=now,message="Acknowledged memories are available in fleet memory",
+                        metadata={"run_id":run["run_id"],"count":len(current["acknowledged"]),"generation":checkpoint["generation"]}))
+                synchronized += len(run["acknowledged"])
+        return synchronized
+
+    async def _refresh_and_confirm(self, uploaded: int, failed: int, skipped: int) -> SyncRunResult:
+        error = None
+        synchronized = 0
+        try:
+            self._register_acknowledged_run()
+            result = await self.snapshots.refresh()
+            checkpoint = self._confirmed_checkpoint(result)
+            synchronized = await self._blocking(self._complete_confirmed_runs, checkpoint)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            # The immutable upload acknowledgment and pending cohort survive any
+            # network, apply, checkpoint, or final completion transaction failure.
+            with self.db.transaction() as conn:
+                for run in self._pending_runs():
+                    run.update(last_error=error,updated_at=datetime.now(timezone.utc).isoformat())
+                    conn.execute("UPDATE sync_checkpoints SET value=?,updated_at=? WHERE checkpoint_id=?",
+                        (json.dumps(run,sort_keys=True),run["updated_at"],"sync-run:"+run["run_id"]))
+        pending = len(self.outbox.pending(self.batch_size))
+        snapshot_pending = sum(item.status in ("UPLOADED","SNAPSHOT_PENDING") for item in self.outbox.all())
+        status = "DEGRADED" if failed or error else "SNAPSHOT_PENDING" if snapshot_pending else "COMPLETED"
+        return SyncRunResult(status,uploaded,failed,skipped,pending,synchronized,snapshot_pending,error)
 
     async def _fail_batch(self, items: list[OutboxItem], exc: Exception) -> SyncRunResult:
         failed = 0

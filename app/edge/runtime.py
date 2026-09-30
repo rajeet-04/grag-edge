@@ -11,6 +11,7 @@ from app.edge.sync.connectivity import ConnectivityMonitor
 from app.edge.sync.outbox import SyncOutbox
 from app.edge.sync.server_client import QdrantServerClient
 from app.edge.sync.service import SyncService
+from app.edge.sync.snapshot import FleetSnapshotService
 from app.llm.embedding import get_embedding_service
 
 
@@ -34,8 +35,10 @@ class EdgeRuntime:
         self.sync_interval_seconds = settings.sync_interval_seconds
         self.cloud = remote or QdrantServerClient(settings.qdrant_url, settings.qdrant_collection, settings.qdrant_api_key)
         self.connectivity = ConnectivityMonitor(self.cloud, self.state_db, self.activity, self.device_id)
+        self.snapshots = FleetSnapshotService(store,self.state_db,self.activity,self.device_id,
+            settings.qdrant_url,settings.qdrant_collection,settings.qdrant_api_key) if hasattr(store,"fleet_snapshot_base") else None
         self.sync = SyncService(store, self.memories, self.outbox, self.state_db, self.activity, self.cloud,
-            self.device_id, settings.embedding_dimension)
+            self.device_id, settings.embedding_dimension, snapshots=self.snapshots)
         self._background: set[asyncio.Task] = set()
         self._manual_runs: set[asyncio.Task] = set()
 
@@ -51,6 +54,11 @@ class EdgeRuntime:
         self.connectivity.db = self.state_db
         self.connectivity.activity = self.activity
         self.sync.recover_interrupted()
+        if self.snapshots is not None:
+            self.snapshots.store = self.store
+            self.snapshots.db = self.state_db
+            self.snapshots.activity = self.activity
+            self.snapshots.reconcile_checkpoint()
         self.activity.append(ActivityEvent(event_type="DEVICE_STARTED", device_id=self.device_id,
             timestamp=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
             message="Edge device runtime started"))
@@ -109,16 +117,20 @@ class EdgeRuntime:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         try:
-            self.store.close()
+            if self.snapshots is not None:
+                await self.snapshots.close()
         finally:
             try:
-                self.state_db.close()
+                self.store.close()
             finally:
                 try:
-                    close = getattr(self.embedding_service, "close", None)
-                    if close is not None:
-                        await close()
+                    self.state_db.close()
                 finally:
-                    close_remote = getattr(self.cloud, "close", None)
-                    if close_remote is not None:
-                        close_remote()
+                    try:
+                        close = getattr(self.embedding_service, "close", None)
+                        if close is not None:
+                            await close()
+                    finally:
+                        close_remote = getattr(self.cloud, "close", None)
+                        if close_remote is not None:
+                            close_remote()

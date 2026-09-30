@@ -140,3 +140,18 @@ def test_stale_download_base_is_rejected_before_native_apply(tmp_path):
         store.stage_and_apply_fleet_snapshot(bad,expected_generation="already-replaced")
     assert store.list_fleet_points()==[]
     store.close()
+
+
+def test_server_304_preserves_generation_and_durable_checkpoint_without_apply(tmp_path):
+    store=Store(); db=EdgeStateDB(tmp_path/"state.db"); activity=ActivityLog(db)
+    sync=FleetSnapshotService(store,db,activity,"robot","http://cloud","fleet",client=httpx.AsyncClient(transport=httpx.MockTransport(lambda _:httpx.Response(304))))
+    async def run():
+        sync.reconcile_checkpoint()
+        before=db._connection.execute("SELECT value FROM sync_checkpoints WHERE checkpoint_id='fleet'").fetchone()[0]
+        result=await sync.refresh()
+        assert result.status=="UNCHANGED" and result.generation=="A"
+        assert store.applied==[]
+        assert db._connection.execute("SELECT value FROM sync_checkpoints WHERE checkpoint_id='fleet'").fetchone()[0]==before
+        assert len([e for e in activity.list(100) if e.event_type=="FLEET_REFRESH_COMPLETED"])==1
+        await sync.close()
+    asyncio.run(run())

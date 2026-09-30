@@ -105,3 +105,28 @@ def test_revision_sqlite_failure_returns_503_instead_of_success(tmp_path, monkey
             "content": "revised value", "parent_revision": 1,
         })
         assert response.status_code == 503
+
+
+def test_sync_history_endpoint_exposes_durable_runs_and_validates_limit(tmp_path, monkeypatch):
+    client,edge=client_for(tmp_path,monkeypatch)
+    with client:
+        response=client.get("/api/v1/edge/sync/history")
+        assert response.status_code==200 and response.json()==[]
+        assert client.get("/api/v1/edge/sync/history?limit=0").status_code==422
+        with edge.state_db.transaction() as conn:
+            conn.execute("INSERT INTO sync_checkpoints(checkpoint_id,value,updated_at) VALUES(?,?,?)",
+                ("sync-run:test",'{"run_id":"test","status":"SYNCHRONIZED"}',"2026-09-30T00:00:00Z"))
+        assert client.get("/api/v1/edge/sync/history").json()[0]["run_id"]=="test"
+        assert "snapshot_pending" in client.get("/api/v1/edge/sync/status").json()
+
+
+def test_stats_counts_confirmed_sync_after_uploaded_state_advances(tmp_path,monkeypatch):
+    client,edge=client_for(tmp_path,monkeypatch)
+    with client:
+        created=client.post("/api/v1/edge/memories",json={"content":"learned fleet counter fact","memory_type":"learned_fact"}).json()
+        with edge.state_db.transaction() as conn:
+            conn.execute("UPDATE sync_outbox SET status='SYNCHRONIZED' WHERE memory_id=?",(created["memory_id"],))
+            conn.execute("UPDATE memory_policy SET sync_state='SYNCHRONIZED' WHERE memory_id=?",(created["memory_id"],))
+        stats=client.get("/api/v1/edge/stats").json()
+        assert stats["sync_success_count"]==1 and stats["last_sync"] is not None
+        assert stats["pending_sync"]==0

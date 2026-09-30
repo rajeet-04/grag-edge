@@ -45,17 +45,22 @@ class FleetSnapshotService:
                 "ON CONFLICT(checkpoint_id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at", (json.dumps(metadata, sort_keys=True), now))
             ActivityLog.append_in_transaction(conn, event)
 
-    async def _download(self, method: str, url: str, manifest=None) -> Path:
+    async def _download(self, method: str, url: str, manifest=None) -> Path | None:
         fd, name = tempfile.mkstemp(suffix=".part", prefix="grag-fleet-")
         path = Path(name)
         try:
             with os.fdopen(fd, "wb") as file:
                 async with self.client.stream(method, url, json=manifest if method == "POST" else None) as response:
-                    response.raise_for_status()
-                    async for chunk in response.aiter_bytes():
-                        file.write(chunk)
+                    unchanged = method == "POST" and response.status_code == 304
+                    if not unchanged:
+                        response.raise_for_status()
+                        async for chunk in response.aiter_bytes():
+                            file.write(chunk)
                 file.flush()
                 os.fsync(file.fileno())
+            if unchanged:
+                path.unlink(missing_ok=True)
+                return None
             return path
         except BaseException:
             path.unlink(missing_ok=True)
@@ -106,6 +111,9 @@ class FleetSnapshotService:
             self._started()
             manifest, base = await asyncio.to_thread(self.store.fleet_snapshot_base)
             path = await self._download("POST", self.base_url + "/partial/create", manifest)
+            if path is None:
+                self.reconcile_checkpoint()
+                return self._result("UNCHANGED")
             try:
                 await self._apply(self.store.stage_and_apply_fleet_snapshot, path, expected_generation=base["generation"])
                 self.reconcile_checkpoint()

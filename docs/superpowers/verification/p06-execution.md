@@ -25,3 +25,30 @@
 
 - Incomplete committed metadata (valid generation UUID but absent refresh ID/timestamp/kind) was RED (`DID NOT RAISE`), then GREEN after validating all publication fields and closing failed-load handles.
 - Losing the current pointer after the first valid publication was RED (restart silently selected the original empty shard), then GREEN after retaining an atomic recovery pointer even for the first publication. Both current/recovery references protect their validated generation from cleanup after a durability error. Stages with neither pointer remain ignored.
+
+## Task 3 — synchronization lifecycle and runtime
+
+- RED: six prepared lifecycle tests failed with the missing `snapshots` constructor interface; runtime wiring failed with missing `EdgeRuntime.snapshots`, and history endpoint failed with HTTP 404. Implementation kept the existing async `SyncService.run_once()` interface and uses the runtime's owned event loop for the async snapshot client.
+- After upload acknowledgment, outbox and policy transition together to `SNAPSHOT_PENDING`. Durable acknowledged cohorts are recorded in existing `sync_checkpoints`. Every cohort waits for an active fleet generation/checkpoint pair and matching `memory_id`, `logical_id`, revision, and content hash for every acknowledged entry. Missing/mismatched fleet data, a missing checkpoint, and failed apply remain pending without another upload.
+- Cohort state, outbox/policy completion, completed run checkpoint, and the deterministic `SYNC_COMPLETED` event commit in one SQLite transaction. A trigger-injected completion-event failure proved full rollback, then retry proved one eventual completion. Startup recovery preserves completed states; failed refresh resumes the pending cohort.
+- Runtime owns one snapshot client and closes it after joining canceled native work. A shutdown failure regression was observed RED (SQLite connection leaked), then GREEN after preserving nested resource cleanup.
+- `GET /api/v1/edge/sync/history` exposes durable cohort history. Status/queue include snapshot-pending work and synchronized counts. Existing operation counters were advanced to count `SYNCHRONIZED` as success; the previous uploaded-only count was observed RED (zero after successful sync), then GREEN.
+- Ruling: a durable synchronization run is the acknowledged cohort, persisted in `sync_checkpoints` rather than a new table. All entries in that cohort must be present before its single completion event. Failed/unacknowledged uploads retain their independent retry lifecycle. Cost if wrong: UI may need a later display grouping across upload attempts and acknowledged cohorts.
+
+### Real unchanged response correction
+
+The real rebuilt Docker runtime exposed Qdrant **HTTP 304 with no archive body** once its native manifest was exactly unchanged. The initial helper had assumed every successful stream was HTTP 200; it now preserves actual HTTP status. The new regression was RED with `HTTPStatusError: 304`, then GREEN: 304 returns `UNCHANGED`, preserves the active generation/checkpoint, performs no native apply, and emits no duplicate completion for that generation.
+
+### Final gates
+
+- `QDRANT_LIVE_DOCKER_CONTAINER=grag-api uv run pytest tests/edge/sync -q`: **42 passed**, including actual server/native format and full lifecycle gates.
+- `QDRANT_LIVE_DOCKER_CONTAINER=grag-api uv run pytest tests/edge -q`: **106 passed**, 25 warnings. Native live tests include a late apply failure on a nonempty server-seeded A generation and confirm A remains retrievable with the unchanged manifest.
+- Actual Docker `make baseline-check` with the live gate enabled: **exit 0**, **306 passed, 1 skipped**, exactly **10 imported known failures**, no regression. Output: `/private/tmp/p06-final-baseline-check.log`.
+- `docker-compose config -q` and `git diff --check`: passed.
+- Rebuilt API image `sha256:41934516e7cb106fb0df0984a1b0ca900df5c33e73e80341d9e8ca3b9149fa06`: actual Docker health `healthy`. The API mounts only its named `/data` volume; no Docker socket. Qdrant has no host port bindings and is only on `grag-cloud-net`.
+
+### Actual Docker API / Ollama embedding smoke
+
+The rebuilt API used real local 768-dimensional Ollama embeddings and actual Qdrant 1.17.1 snapshots. A new learned fact (`f9ff72ee-dc6d-46e7-930a-c3ab27e29dac`) was observed through **QUEUED → SNAPSHOT_PENDING → SYNCHRONIZED**. Run `10d07c97-f7fb-5279-a02e-e554a9d7372c` had exactly one completion event after a repeated manual run. Hybrid search succeeded; fleet count was 4 and synchronized-success count was 4. Actual API restart preserved that record's synchronized state, its durable history, and exactly one completion event. Evidence: `/private/tmp/p06-runtime-smoke.json`.
+
+No P07 local cleanup/deduplication or conflict implementation is included. Earlier fleet generations remain retained for recovery; retention policy is not changed in P06.

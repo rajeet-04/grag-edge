@@ -33,13 +33,13 @@ def stats(request: Request):
     local = [p for p in edge.store.list_points() if p.payload.get("record_type") == "memory"]
     fleet = [p for p in edge.store.list_fleet_points() if p.payload.get("record_type") == "memory"]
     items = edge.outbox.all()
-    last_sync = max((item.updated_at for item in items if item.status == "UPLOADED"), default=None)
+    last_sync = max((item.updated_at for item in items if item.status == "SYNCHRONIZED"), default=None)
     return {
         "local_memory_count": len(local),
         "fleet_memory_count": len(fleet),
-        "pending_sync": sum(item.status in ("QUEUED", "RETRY_WAIT", "UPLOADING") for item in items),
+        "pending_sync": sum(item.status in ("QUEUED", "RETRY_WAIT", "UPLOADING", "UPLOADED", "SNAPSHOT_PENDING") for item in items),
         "last_sync": last_sync.isoformat() if last_sync else None,
-        "sync_success_count": sum(item.status == "UPLOADED" for item in items),
+        "sync_success_count": sum(item.status == "SYNCHRONIZED" for item in items),
         "sync_failure_count": sum(item.retry_count for item in items),
         "search_latency_ms": None,
         "connectivity": edge.connectivity.current()["connectivity"],
