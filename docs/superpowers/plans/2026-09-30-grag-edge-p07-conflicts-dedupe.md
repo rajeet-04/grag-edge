@@ -59,9 +59,10 @@
 - Produce: `ConflictService.detect(local: MemoryRecord, fleet: MemoryRecord) -> ConflictRecord | None`.
 - Conflict when both descend from the same base, content differs, and type is conflict-sensitive.
 - Produce: `list_open() -> list[ConflictRecord]`, `get(conflict_id: str) -> ConflictRecord | None`.
+- Emit `CONFLICT_DETECTED` exactly once when a new open conflict is persisted.
 
 - [ ] **Step 1: Write detection matrix**
-  Cover procedure divergence, learned-fact divergence, append-only observation, identical revisions, and differing logical IDs.
+  Cover procedure divergence, learned-fact divergence, append-only observation, identical revisions, differing logical IDs, and exactly-once `CONFLICT_DETECTED` emission.
 - [ ] **Step 2: Run**
   Expected: FAIL.
 - [ ] **Step 3: Implement detector and SQLite repository**
@@ -74,16 +75,20 @@
 
 **Files:**
 - Create: `app/edge/api/conflicts.py`
+- Modify: `app/edge/api/operations.py`
 - Modify: `app/main.py`
 - Test: `tests/edge/api/test_conflicts.py`
+- Test: `tests/edge/api/test_edge_stats_conflicts.py`
 
 **Interfaces:**
 - Produce endpoints: `GET /api/v1/edge/conflicts`, `GET /api/v1/edge/conflicts/{id}`, `POST /api/v1/edge/conflicts/{id}/resolve`.
 - Resolution enum: `KEEP_LOCAL`, `ACCEPT_FLEET`, `MERGE`.
 - `MERGE` requires merged content and creates the next revision through `MemoryService.revise`.
+- Emit `CONFLICT_RESOLVED` after a successful first resolution.
+- Extend `GET /api/v1/edge/stats` with current open conflict count.
 
-- [ ] **Step 1: Write API tests for all resolutions**
-  Assert history preservation and idempotent second resolution request.
+- [ ] **Step 1: Write API tests for all resolutions and stats**
+  Assert history preservation, idempotent second resolution request, exactly-one `CONFLICT_RESOLVED` event, and open-conflict stats decrement after resolution.
 - [ ] **Step 2: Run**
   Expected: FAIL.
 - [ ] **Step 3: Implement API/service resolution flow**
