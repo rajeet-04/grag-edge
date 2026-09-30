@@ -94,6 +94,19 @@ make demo-robot-b
 Robot A writes while offline, syncs, and Robot B (`ROBOT-02`, port 8002) then finds the memory with
 origin FLEET from `ROBOT-01`.
 
+## 9. Browser e2e against the real stack
+
+```bash
+make demo-e2e-real
+```
+
+Resets and starts the stack, brings up `grag-edge-ui` (nginx serving the built console and proxying the real
+Edge API), seeds the V-22 conflict, then drives Chromium (Playwright, in a runner container on the edge
+network) through the real status rail, hybrid search with provenance, Sync and Conflicts pages and a real
+offline/online transition using `scripts/demo/offline.sh` / `online.sh`. `E2E_SKIP_PREPARE=1` reuses a running
+stack. The hermetic mock-API suite (`npm run e2e` in `frontend/`, includes the axe light/dark audit and keyboard
+navigation checks) needs no Docker services.
+
 ## Troubleshooting
 
 - `expected exactly one running fastapi container`: run `make demo-start`.
