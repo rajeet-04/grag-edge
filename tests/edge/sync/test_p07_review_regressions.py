@@ -185,3 +185,39 @@ def test_superseded_open_conflict_is_closed_by_scan(tmp_path):
         assert [c.local_revision for c in sync.conflicts.list_open()] == [3]
 
     asyncio.run(run())
+
+
+def test_peer_resolution_blocks_fork_and_false_delete_on_losing_device(tmp_path):
+    """N6: a device whose head was resolved by a peer must not fork or delete only its own copy."""
+    A = fresh(tmp_path / "a")
+    B = fresh(tmp_path / "b")
+    B[5].points = A[5].points
+    B[6].remote = A[5]
+    B[7].remote = A[5]
+    memories_a, sync_a = A[4], A[7]
+    memories_b, sync_b = B[4], B[7]
+
+    async def run():
+        r1 = await memories_a.create(CreateMemory(content="fleet safe base", memory_type=MemoryType.LEARNED_FACT))
+        await sync_a.run_once()
+        await memories_b.create(CreateMemory(content="fleet safe base", memory_type=MemoryType.LEARNED_FACT,
+                                             memory_id=r1.memory_id, logical_id=r1.logical_id))
+        await sync_b.run_once()
+        await memories_a.revise(r1.logical_id, ReviseMemory(content="fleet safe A edit", parent_revision=1))
+        await memories_b.revise(r1.logical_id, ReviseMemory(content="fleet safe B edit", parent_revision=1))
+        await sync_a.run_once()
+        await sync_b.run_once()
+        await sync_a.run_once()
+        conflict = sync_a.conflicts.list_open()[0]
+        await sync_a.conflicts.resolve(conflict.conflict_id, "KEEP_LOCAL", memories_a)
+        for _ in range(2):
+            await sync_a.run_once()
+            await sync_b.run_once()
+        before = [(r.revision, r.memory_id) for r in memories_b.history(r1.logical_id)]
+        with pytest.raises(ValueError, match="resolved by a peer"):
+            await memories_b.revise(r1.logical_id, ReviseMemory(content="fork", parent_revision=2))
+        with pytest.raises(ValueError, match="resolved by a peer"):
+            await memories_b.tombstone(r1.logical_id)
+        assert [(r.revision, r.memory_id) for r in memories_b.history(r1.logical_id)] == before
+
+    asyncio.run(run())

@@ -151,7 +151,16 @@ class MemoryService:
         local = [record for record in self._records() if record.logical_id == logical_id]
         if local:
             latest = max(local, key=lambda record: record.revision)
-            return None if latest.is_deleted else latest
+            if latest.is_deleted:
+                return None
+            for point in self.store.list_fleet_points():
+                payload = point.payload
+                if (payload.get("record_type") == "memory" and payload.get("logical_id") == logical_id
+                        and latest.memory_id in (payload.get("resolves_memory_ids") or ())):
+                    raise ValueError(
+                        f"memory {logical_id} was resolved by a peer at revision {payload.get('revision')}; "
+                        "the local head is superseded and cannot be revised or deleted")
+            return latest
         if self.state_db is None:
             return None
         fleet_points = [point for point in self.store.list_fleet_points()
