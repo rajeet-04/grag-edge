@@ -1,0 +1,10 @@
+tests/agents/test_explanation_agent.py::TestReasoningStepsWithConfidence::test_empty_paths
+tests/agents/test_explanation_agent.py::TestReasoningStepsWithConfidence::test_more_steps_than_paths
+tests/integration/test_ollama_client.py::TestOllamaClient::test_client_initialization_cloud
+tests/services/test_entity_resolution.py::TestEdgeCases::test_paris_city_vs_company
+tests/services/test_entity_resolution.py::TestValidationService::test_threshold_analysis
+tests/services/test_entity_resolution.py::TestValidationService::test_validation_accuracy_calculation
+tests/services/test_entity_resolution.py::TestValidationService::test_validation_precision_recall_f1
+tests/services/test_similarity_service.py::TestSimilarityService::test_compute_similarity_fallback_to_names
+tests/services/test_similarity_service.py::TestSimilarityService::test_compute_similarity_weights
+tests/services/test_similarity_service.py::TestSimilarityService::test_handle_entity_pair
