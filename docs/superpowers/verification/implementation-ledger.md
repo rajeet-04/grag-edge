@@ -25,7 +25,8 @@ P00 is complete at `45fae76`; its regression gate accepts full green or exactly 
 - P08: COMPLETE (user-directed fast finish) at `6a02061` (`8614dc2`, `513d959`, `6a02061`) — tests/edge 144 passed, baseline-check exit 0 (360 passed, 1 skipped, exact 10 imported failures, known-failures file unchanged), compose-config and diff-check clean; offline streaming/non-streaming acceptance passes with Qdrant Server/Neo4j down and cloud unset; ChromaDB fully removed. No independent P08 review was run. See p08-execution.md.
 - P09: COMPLETE (user-directed fast finish) at `00e3f50` (`eb95123`, `30a8501`, `04ba28b`, `00e3f50`) — frontend vitest 16/16, `tsc --noEmit` and `vite build` clean, frontend Docker image builds; tests/edge 144 passed, baseline-check exit 0 (360 passed, 1 skipped, exact 10 imported failures), compose-config and diff-check clean. No Playwright browser smoke test and no independent review. See p09-execution.md.
 - P10: COMPLETE (user-directed fast finish) at `8a0ce30` (`83cab2d`, `402e9aa`, `8a0ce30`) — make demo-acceptance passed twice from reset with real Docker network cut; tests/demo 20, tests/edge 144, baseline-check exit 0 (380 passed, 1 skipped, exact 10 imported failures), compose-config and diff-check clean. See p10-execution.md.
-- P11–P12: NOT STARTED.
+- P11: COMPLETE (stretch, user-directed fast finish) at `652f375` (`cc2cefe`, `652f375`) — make demo-robot-b passed twice from reset (B receives A's offline memory as FLEET from ROBOT-01); tests/demo 27, tests/edge 144, baseline-check exit 0, demo-acceptance passes. See p11-execution.md.
+- P12: NOT STARTED.
 
 ## Rulings
 
