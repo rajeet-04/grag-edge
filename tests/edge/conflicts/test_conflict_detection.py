@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from hashlib import sha256
+import sqlite3
 
 from app.edge.conflicts import ConflictRecord, ConflictService
 from app.edge.memory.models import MemoryRecord, MemoryType, SyncState
@@ -71,6 +72,9 @@ def test_procedure_divergence_persists_shared_base_identity_and_provenance(tmp_p
     # SQLite contains a metadata snapshot but never stores either memory's text.
     with db._lock:
         row = db._connection.execute("SELECT * FROM conflicts").fetchone()
+    assert row["local_memory_id"] == "local-v2"
+    assert row["fleet_memory_id"] == "fleet-v2"
+    assert ConflictRecord.model_validate_json(row["metadata_json"]) == result
     assert "Inspect the seal first" not in str(tuple(row))
     assert "Check the bearing first" not in str(tuple(row))
     db.close()
@@ -151,4 +155,29 @@ def test_concurrent_duplicate_detection_inserts_one_conflict_and_event(tmp_path)
     assert len({result.conflict_id for result in results}) == 1
     assert len(conflicts.list_open()) == 1
     assert [event.event_type for event in ActivityLog(db).list(10)] == ["CONFLICT_DETECTED"]
+    db.close()
+
+
+def test_existing_conflicts_table_migration_preserves_reference_columns(tmp_path):
+    path = tmp_path / "legacy-state.sqlite"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE conflicts (conflict_id TEXT PRIMARY KEY, logical_id TEXT NOT NULL, "
+        "local_memory_id TEXT NOT NULL, fleet_memory_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO conflicts VALUES('legacy-conflict','logical-1','local-uuid','fleet-uuid','OPEN','2026-09-30T12:00:00+00:00')"
+    )
+    connection.commit()
+    connection.close()
+
+    db = EdgeStateDB(path)
+
+    with db._lock:
+        columns = {row["name"] for row in db._connection.execute("PRAGMA table_info(conflicts)")}
+        row = db._connection.execute("SELECT * FROM conflicts WHERE conflict_id='legacy-conflict'").fetchone()
+    assert "metadata_json" in columns
+    assert row["local_memory_id"] == "local-uuid"
+    assert row["fleet_memory_id"] == "fleet-uuid"
+    assert row["metadata_json"] == "{}"
     db.close()

@@ -76,7 +76,8 @@ class EdgeStateDB:
                     local_memory_id TEXT NOT NULL,
                     fleet_memory_id TEXT NOT NULL,
                     status TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL DEFAULT '{}'
                 );
                 CREATE TABLE IF NOT EXISTS memory_policy (
                     memory_id TEXT PRIMARY KEY,
@@ -107,6 +108,11 @@ class EdgeStateDB:
                 self._connection.execute("ALTER TABLE memory_policy ADD COLUMN sensitivity TEXT NOT NULL DEFAULT 'fleet_safe'")
             if "is_deleted" not in policy_columns:
                 self._connection.execute("ALTER TABLE memory_policy ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0")
+            conflict_columns = {row["name"] for row in self._connection.execute("PRAGMA table_info(conflicts)")}
+            if "metadata_json" not in conflict_columns:
+                self._connection.execute(
+                    "ALTER TABLE conflicts ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"
+                )
             self._connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS memory_policy_revision ON memory_policy(logical_id, revision)")
 
     @contextmanager

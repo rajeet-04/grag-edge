@@ -103,7 +103,7 @@ class ConflictService:
     def _record_from_row(row) -> ConflictRecord | None:
         """Decode rows written by this service; ignore pre-existing legacy rows."""
         try:
-            return ConflictRecord.model_validate_json(row["fleet_memory_id"])
+            return ConflictRecord.model_validate_json(row["metadata_json"])
         except (TypeError, ValueError):
             return None
 
@@ -128,10 +128,10 @@ class ConflictService:
                 return self._record_from_row(row)
             payload = candidate.model_dump_json()
             cursor = conn.execute(
-                "INSERT INTO conflicts(conflict_id,logical_id,local_memory_id,fleet_memory_id,status,created_at) "
-                "VALUES(?,?,?,?,?,?)",
-                (candidate.conflict_id, candidate.logical_id, candidate.local_memory_id, payload,
-                 candidate.status, candidate.detected_at.isoformat()),
+                "INSERT INTO conflicts(conflict_id,logical_id,local_memory_id,fleet_memory_id,status,created_at,metadata_json) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (candidate.conflict_id, candidate.logical_id, candidate.local_memory_id, candidate.fleet_memory_id,
+                 candidate.status, candidate.detected_at.isoformat(), payload),
             )
             if cursor.rowcount:
                 self.activity.append_in_transaction(conn, ActivityEvent(
