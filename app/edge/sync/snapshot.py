@@ -80,11 +80,38 @@ class FleetSnapshotService:
         self._started()
         path = await self._download("GET", self.base_url)
         try:
-            await asyncio.to_thread(self.store.replace_fleet_from_snapshot, path)
+            await self._apply(self.store.replace_fleet_from_snapshot, path)
             self.reconcile_checkpoint()
             return self._result("COMPLETED")
         finally:
             path.unlink(missing_ok=True)
+
+    async def _apply(self, operation, path: Path, **kwargs) -> None:
+        # Cancellation cannot stop a native worker thread. Wait for its publication
+        # boundary before allowing runtime shutdown to close the store/database.
+        task = asyncio.create_task(asyncio.to_thread(operation, path, **kwargs))
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            try:
+                await task
+                self.reconcile_checkpoint()
+            finally:
+                raise
+
+    async def refresh(self) -> FleetRefreshResult:
+        async with self._lock:
+            if self.store.fleet_snapshot_metadata() is None:
+                return await self._bootstrap()
+            self._started()
+            manifest, base = await asyncio.to_thread(self.store.fleet_snapshot_base)
+            path = await self._download("POST", self.base_url + "/partial/create", manifest)
+            try:
+                await self._apply(self.store.stage_and_apply_fleet_snapshot, path, expected_generation=base["generation"])
+                self.reconcile_checkpoint()
+                return self._result("COMPLETED")
+            finally:
+                path.unlink(missing_ok=True)
 
     async def close(self) -> None:
         await self.client.aclose()

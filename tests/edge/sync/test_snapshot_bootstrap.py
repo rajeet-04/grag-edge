@@ -70,3 +70,39 @@ def test_native_invalid_full_snapshot_and_orphan_restart_preserve_empty_fleet(tm
     assert reopened.fleet_snapshot_metadata() is None
     assert reopened.list_fleet_points() == []
     reopened.close()
+
+
+def test_interrupted_stream_removes_part_and_never_activates_fleet(tmp_path, monkeypatch):
+    import app.edge.sync.snapshot as module
+    class Interrupted(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"partial archive"
+            raise httpx.ReadError("connection interrupted")
+    original = module.tempfile.mkstemp
+    monkeypatch.setattr(module.tempfile, "mkstemp", lambda **kwargs: original(dir=tmp_path, **kwargs))
+    sync, store, db = service(tmp_path, lambda _: httpx.Response(200, stream=Interrupted()))
+    async def run():
+        with pytest.raises(httpx.ReadError): await sync.bootstrap_if_missing()
+        assert store.metadata is None and store.downloads == []
+        assert not list(tmp_path.glob("*.part"))
+        assert db._connection.execute("SELECT COUNT(*) FROM sync_checkpoints").fetchone()[0] == 0
+        await sync.close()
+    asyncio.run(run())
+
+
+def test_restart_after_publication_before_checkpoint_reconciles_once(tmp_path, monkeypatch):
+    sync, store, db = service(tmp_path, lambda _: httpx.Response(200, content=b"valid snapshot"))
+    reconcile=sync.reconcile_checkpoint
+    def crash(): raise RuntimeError("checkpoint interrupted")
+    monkeypatch.setattr(sync,"reconcile_checkpoint",crash)
+    async def run():
+        with pytest.raises(RuntimeError,match="checkpoint interrupted"): await sync.bootstrap_if_missing()
+        assert store.metadata is not None
+        assert db._connection.execute("SELECT COUNT(*) FROM sync_checkpoints").fetchone()[0] == 0
+        monkeypatch.setattr(sync,"reconcile_checkpoint",reconcile)
+        assert (await sync.bootstrap_if_missing()).status=="UNCHANGED"
+        sync.reconcile_checkpoint()
+        assert len(store.downloads)==1
+        assert [e.event_type for e in sync.activity.list(20)].count("FLEET_REFRESH_COMPLETED")==1
+        await sync.close()
+    asyncio.run(run())

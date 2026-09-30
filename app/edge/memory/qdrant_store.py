@@ -385,7 +385,12 @@ class QdrantEdgeStore:
             self._fleet_active_path = path
             self._fleet_metadata = metadata
             if old:
-                old.close()
+                try:
+                    old.close()
+                except Exception:
+                    # This immutable old generation is retained for recovery; a
+                    # retirement error cannot undo a committed publication.
+                    pass
 
     def replace_fleet_from_snapshot(self, snapshot_path: Path) -> None:
         self._require_open()
@@ -403,16 +408,92 @@ class QdrantEdgeStore:
                 published = True
             finally:
                 if not published:
-                    if shard:
+                    committed = self._read_json(self._pointer)
+                    if committed and committed.get("generation") == stage.name:
+                        # The pointer may have been replaced before a directory fsync
+                        # failed. Retain this validated target for restart recovery.
+                        if shard:
+                            try:
+                                shard.close()
+                            except Exception:
+                                pass
+                        continue_cleanup = False
+                    else:
+                        continue_cleanup = True
+                    if shard and continue_cleanup:
                         try:
                             shard.close()
                         except Exception:
                             pass
-                    shutil.rmtree(stage, ignore_errors=True)
+                    if continue_cleanup:
+                        shutil.rmtree(stage, ignore_errors=True)
+
+    def fleet_manifest(self) -> dict[str, Any]:
+        self._require_open()
+        with self._fleet_lock:
+            if self._fleet is None:
+                raise RuntimeError("No valid fleet shard is available")
+            return self._fleet.snapshot_manifest()
+
+    def fleet_snapshot_base(self) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """Capture the opaque manifest and its generation under one reader lock."""
+        with self._fleet_lock:
+            return self.fleet_manifest(), self.fleet_snapshot_metadata()
+
+    def stage_and_apply_fleet_snapshot(self, snapshot_path: Path, expected_generation: str | None = None) -> None:
+        self._require_open()
+        with self._refresh_lock:
+            if expected_generation is not None and (self._fleet_metadata or {}).get("generation") != expected_generation:
+                raise RuntimeError("Fleet snapshot base generation changed during download")
+            self._generations.mkdir(parents=True, exist_ok=True)
+            stage = self._generations / str(uuid4())
+            shard = None
+            published = False
+            try:
+                with self._fleet_lock:
+                    if self._fleet is None:
+                        raise RuntimeError("No valid fleet shard is available")
+                    # Close only while copying a stable immutable base; local writes do not take this lock.
+                    self._fleet.flush()
+                    self._fleet.close()
+                    self._fleet = None
+                    try:
+                        shutil.copytree(self._fleet_active_path, stage)
+                    finally:
+                        self._fleet = EdgeShard.load(str(self._fleet_active_path), self._config)
+                shard = EdgeShard.load(str(stage), self._config)
+                shard.update_from_snapshot(str(snapshot_path))
+                shard.flush()
+                shard.close()
+                shard = EdgeShard.load(str(stage), self._config)
+                self._validate_fleet(shard)
+                self._publish_generation(stage, shard, "partial")
+                published = True
+            finally:
+                if not published:
+                    committed = self._read_json(self._pointer)
+                    if committed and committed.get("generation") == stage.name:
+                        # The pointer may have been replaced before a directory fsync
+                        # failed. Retain this validated target for restart recovery.
+                        if shard:
+                            try:
+                                shard.close()
+                            except Exception:
+                                pass
+                        continue_cleanup = False
+                    else:
+                        continue_cleanup = True
+                    if shard and continue_cleanup:
+                        try:
+                            shard.close()
+                        except Exception:
+                            pass
+                    if continue_cleanup:
+                        shutil.rmtree(stage, ignore_errors=True)
 
     def close(self) -> None:
         """Flush and close both shards; safe to call repeatedly."""
-        with self._fleet_lock:
+        with self._refresh_lock, self._fleet_lock:
             errors: list[Exception] = []
             for name in ("_local", "_fleet"):
                 shard = getattr(self, name)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
+from pathlib import Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,3 +73,13 @@ class SearchableEdgeMemoryStore(EdgeMemoryStore, Protocol):
     def query_sparse(
         self, vector: Any, limit: int, origin: MemoryOrigin
     ) -> list[RawSearchHit]: ...
+
+
+class FleetSnapshotStore(EdgeMemoryStore, Protocol):
+    """Application snapshot boundary; the native manifest remains opaque JSON."""
+
+    def fleet_snapshot_metadata(self) -> dict[str, Any] | None: ...
+    def fleet_manifest(self) -> dict[str, Any]: ...
+    def replace_fleet_from_snapshot(self, snapshot_path: Path) -> None: ...
+    def fleet_snapshot_base(self) -> tuple[dict[str, Any], dict[str, Any] | None]: ...
+    def stage_and_apply_fleet_snapshot(self, snapshot_path: Path, expected_generation: str | None = None) -> None: ...
