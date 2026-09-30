@@ -17,6 +17,17 @@ Branch: `codex/grag-edge-p00-baseline`
 - Base control: the same full pytest suite on original commit `202b372` reported the same 10 failures, 200 passes, 1 explicit service-dependent skip, and 20 warnings. The P0 changes did not introduce these failures.
 - Task 2 RED: the topology assertion failed because `grag-edge-net` was absent.
 - Task 2 verification: rendered Compose configuration and the `grag-edge-net` membership assertion passed. The full pytest run again reported the same 10 failures, 200 passes, 1 skipped, and 20 warnings.
+- The 10 failing test IDs are:
+  - `tests/agents/test_explanation_agent.py::TestReasoningStepsWithConfidence::test_more_steps_than_paths`
+  - `tests/agents/test_explanation_agent.py::TestReasoningStepsWithConfidence::test_empty_paths`
+  - `tests/integration/test_ollama_client.py::TestOllamaClient::test_client_initialization_cloud`
+  - `tests/services/test_entity_resolution.py::TestValidationService::test_validation_accuracy_calculation`
+  - `tests/services/test_entity_resolution.py::TestValidationService::test_validation_precision_recall_f1`
+  - `tests/services/test_entity_resolution.py::TestValidationService::test_threshold_analysis`
+  - `tests/services/test_entity_resolution.py::TestEdgeCases::test_paris_city_vs_company`
+  - `tests/services/test_similarity_service.py::TestSimilarityService::test_compute_similarity_weights`
+  - `tests/services/test_similarity_service.py::TestSimilarityService::test_compute_similarity_fallback_to_names`
+  - `tests/services/test_similarity_service.py::TestSimilarityService::test_handle_entity_pair`
 - The verifier ran all tests without filters. The existing health-check skip requires Neo4j/Ollama services.
 - `uv lock --check`, `bash -n scripts/dev/verify_baseline.sh`, `git diff --check`, and Compose service/network inspection passed.
 - `make baseline-check` is still red due to the 10 pre-existing failures. The P0 exit gate is not satisfied. Container startup and GPU behavior remain unverified because Docker and NVIDIA are unavailable.
