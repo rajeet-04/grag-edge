@@ -173,7 +173,7 @@ class SyncService:
             return SyncRunResult("RUNNING", pending=len(self.outbox.pending(self.batch_size)))
         async with self._run_lock:
             items = self.outbox.claimable(self.batch_size)
-            if not items and self.snapshots is None:
+            if not items and self.snapshots is None and not self._pending_retractions():
                 return SyncRunResult("IDLE", pending=len(self.outbox.pending(self.batch_size)))
             health = await self._blocking(self.remote.health) if hasattr(self.remote, "health") else CloudHealth.ONLINE
             if health is not CloudHealth.ONLINE and str(health) != CloudHealth.ONLINE.value:
@@ -237,8 +237,17 @@ class SyncService:
                     self._event("SYNC_RETRY", "Remote upload failed; retry scheduled", item.memory_id,
                         {"attempt": retry.retry_count, "error": retry.last_error, "next_attempt_at": retry.next_attempt_at.isoformat() if retry.next_attempt_at else None})
                     failed += 1
+            retraction_error = await self._process_retractions()
             if self.snapshots is not None:
-                return await self._refresh_and_confirm(uploaded, failed, skipped)
+                result = await self._refresh_and_confirm(uploaded, failed, skipped)
+                if retraction_error is None:
+                    retraction_error = await self._confirm_retractions()
+                if retraction_error and result.refresh_error is None:
+                    result = SyncRunResult("DEGRADED", result.uploaded, result.failed, result.skipped, result.pending,
+                        result.synchronized, result.snapshot_pending, retraction_error)
+                return result
+            if retraction_error:
+                failed += 1
             return SyncRunResult("COMPLETED" if failed == 0 else "DEGRADED", uploaded, failed, skipped, len(self.outbox.pending(self.batch_size)))
 
     def history(self, limit: int = 100) -> list[dict[str, Any]]:
@@ -349,6 +358,77 @@ class SyncService:
         snapshot_pending = sum(item.status in ("UPLOADED","SNAPSHOT_PENDING") for item in self.outbox.all())
         status = "DEGRADED" if failed or error else "SNAPSHOT_PENDING" if snapshot_pending else "COMPLETED"
         return SyncRunResult(status,uploaded,failed,skipped,pending,synchronized,snapshot_pending,error)
+
+    def _pending_retractions(self) -> list[dict[str, Any]]:
+        with self.db._lock:
+            rows = self.db._connection.execute(
+                "SELECT value FROM sync_checkpoints WHERE checkpoint_id LIKE 'sync-retraction:%' ORDER BY updated_at,checkpoint_id"
+            ).fetchall()
+        return [job for row in rows if (job := json.loads(row["value"]))["status"] != "COMPLETED"]
+
+    def _save_retraction(self, job: dict[str, Any], **changes: Any) -> dict[str, Any]:
+        now = datetime.now(timezone.utc).isoformat()
+        job = {**job, **changes, "updated_at": now}
+        with self.db.transaction() as conn:
+            conn.execute("UPDATE sync_checkpoints SET value=?,updated_at=? WHERE checkpoint_id=?",
+                (json.dumps(job, sort_keys=True), now, "sync-retraction:" + job["retraction_id"]))
+        return job
+
+    def _archive_fleet_copies(self, target_ids: list[str]) -> None:
+        """Keep immutable local history before remote withdrawal removes fleet copies."""
+        for memory_id in target_ids:
+            if self.store.retrieve(memory_id) is None:
+                fleet = self.store.retrieve_fleet(memory_id)
+                if fleet is not None and fleet.payload.get("record_type") == "memory":
+                    self.store.upsert(fleet)
+
+    async def _process_retractions(self) -> str | None:
+        """Idempotently delete exact remote IDs; only IDs, never memory content, are sent."""
+        error = None
+        for job in self._pending_retractions():
+            try:
+                await self._blocking(self._archive_fleet_copies, job["target_ids"])
+                await self._blocking(self.remote.delete_points, job["target_ids"])
+                self._save_retraction(job, status="DELETED_REMOTE", attempts=job["attempts"] + 1, last_error=None)
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+                self._save_retraction(job, attempts=job["attempts"] + 1, last_error=error)
+        return error
+
+    async def _confirm_retractions(self) -> str | None:
+        """Complete a job only after a refreshed fleet no longer contains its targets."""
+        error = None
+        for job in self._pending_retractions():
+            if job["status"] != "DELETED_REMOTE":
+                continue
+            if any(self.store.retrieve_fleet(memory_id) is not None for memory_id in job["target_ids"]):
+                error = "RetractionNotConfirmed: fleet still contains retracted memory IDs"
+                self._save_retraction(job, status="QUEUED", last_error=error)
+                continue
+            await self._blocking(self._finish_retraction, job)
+        return error
+
+    def _finish_retraction(self, job: dict[str, Any]) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        targets = set(job["target_ids"])
+        with self.db.transaction() as conn:
+            for memory_id in targets:
+                conn.execute("UPDATE sync_outbox SET status='SUPERSEDED',updated_at=? WHERE memory_id=? AND status IN ('UPLOADED','SNAPSHOT_PENDING')", (now, memory_id))
+                conn.execute("UPDATE memory_policy SET sync_state='SUPERSEDED',updated_at=? WHERE memory_id=? AND sync_state IN ('UPLOADED','SNAPSHOT_PENDING')", (now, memory_id))
+            for row in conn.execute("SELECT checkpoint_id,value FROM sync_checkpoints WHERE checkpoint_id LIKE 'sync-run:%'").fetchall():
+                run = json.loads(row["value"])
+                if run["status"] != SyncState.SNAPSHOT_PENDING.value:
+                    continue
+                kept = [entry for entry in run["acknowledged"] if entry["memory_id"] not in targets]
+                if len(kept) == len(run["acknowledged"]):
+                    continue
+                run.update(acknowledged=kept, updated_at=now)
+                if not kept:
+                    run.update(status=SyncState.SUPERSEDED.value, completed_at=now)
+                conn.execute("UPDATE sync_checkpoints SET value=?,updated_at=? WHERE checkpoint_id=?", (json.dumps(run, sort_keys=True), now, row["checkpoint_id"]))
+            job = {**job, "status": "COMPLETED", "completed_at": now, "updated_at": now, "last_error": None}
+            conn.execute("UPDATE sync_checkpoints SET value=?,updated_at=? WHERE checkpoint_id=?",
+                (json.dumps(job, sort_keys=True), now, "sync-retraction:" + job["retraction_id"]))
 
     async def _fail_batch(self, items: list[OutboxItem], exc: Exception) -> SyncRunResult:
         failed = 0

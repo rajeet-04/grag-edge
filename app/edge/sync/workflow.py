@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from app.edge.memory.models import MemoryRecord, Sensitivity, SyncPolicy, SyncState
 from app.edge.policy.engine import SyncDecision
@@ -54,6 +54,8 @@ class PolicyWorkflow:
                     raise ValueError("memory policy identity collision")
                 if state is SyncState.QUEUED:
                     SyncOutbox.enqueue_in_transaction(conn, record.memory_id, record.logical_id, record.revision)
+                if record.is_deleted:
+                    self._queue_retraction(conn, record)
                 return self._view(existing)
 
             latest = conn.execute(
@@ -86,12 +88,45 @@ class PolicyWorkflow:
                 if record.is_deleted or record.sensitivity is Sensitivity.RESTRICTED or decision.action is not SyncPolicy.AUTO:
                     raise ValueError("privacy policy forbids enqueueing this record")
                 SyncOutbox.enqueue_in_transaction(conn, record.memory_id, record.logical_id, record.revision)
+            if record.is_deleted:
+                self._queue_retraction(conn, record)
             self._event(conn, record, memory_event, "Memory record stored", {"revision": record.revision})
             if state is SyncState.LOCAL_ONLY:
                 self._event(conn, record, "POLICY_LOCAL_ONLY", "Memory remains local", {"reason_codes": reason_codes})
             elif state is SyncState.QUEUED:
                 self._event(conn, record, "SYNC_QUEUED", "Memory queued for synchronization", {"reason_codes": reason_codes})
             return self._view(conn.execute("SELECT * FROM memory_policy WHERE memory_id=?", (record.memory_id,)).fetchone())
+
+    @staticmethod
+    def _queue_retraction(conn, tombstone: MemoryRecord) -> None:
+        """Persist IDs of earlier revisions whose remote acceptance is possible.
+
+        A started attempt can have an ambiguous timeout, so any attempt row is
+        included. The checkpoint contains IDs only; it never copies memory text
+        or vectors into synchronization control state.
+        """
+        rows = conn.execute(
+            "SELECT DISTINCT o.memory_id FROM sync_outbox o "
+            "WHERE o.logical_id=? AND o.revision<? AND "
+            "(o.status IN ('UPLOADED','SNAPSHOT_PENDING','SYNCHRONIZED') "
+            "OR EXISTS (SELECT 1 FROM sync_attempts a WHERE a.outbox_id=o.id)) "
+            "ORDER BY o.revision,o.memory_id",
+            (tombstone.logical_id, tombstone.revision),
+        ).fetchall()
+        target_ids = [row["memory_id"] for row in rows]
+        if not target_ids:
+            return
+        retraction_id = str(uuid5(NAMESPACE_URL, f"grag-retraction:{tombstone.logical_id}:{tombstone.revision}:{tombstone.memory_id}"))
+        checkpoint_id = "sync-retraction:" + retraction_id
+        if conn.execute("SELECT 1 FROM sync_checkpoints WHERE checkpoint_id=?", (checkpoint_id,)).fetchone():
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        value = {"retraction_id": retraction_id, "logical_id": tombstone.logical_id,
+                 "tombstone_id": tombstone.memory_id, "status": "QUEUED",
+                 "target_ids": target_ids, "attempts": 0, "created_at": now,
+                 "updated_at": now, "completed_at": None, "last_error": None}
+        conn.execute("INSERT INTO sync_checkpoints(checkpoint_id,value,updated_at) VALUES(?,?,?)",
+                     (checkpoint_id, json.dumps(value, sort_keys=True), now))
 
     def transition_approval(self, record: MemoryRecord, approve: bool) -> dict[str, Any]:
         with self.db.transaction() as conn:

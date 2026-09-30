@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import asyncio
+import json
 from typing import Any
 from uuid import uuid4
 
@@ -101,7 +102,7 @@ class MemoryService:
 
     async def revise(self, logical_id: str, command: ReviseMemory) -> MemoryRecord:
         async with self._write_lock:
-            current = self.current(logical_id)
+            current = self._writable_current(logical_id)
             if current is None:
                 raise KeyError(logical_id)
             if current.revision != command.parent_revision:
@@ -133,7 +134,11 @@ class MemoryService:
         return self._overlay(MemoryRecord.model_validate(point.payload)) if point and point.payload.get("record_type") == "memory" else None
 
     def history(self, logical_id: str) -> list[MemoryRecord]:
-        return sorted((r for r in self._all_records() if r.logical_id == logical_id), key=lambda r: (r.revision, r.memory_id))
+        unique: dict[str, MemoryRecord] = {}
+        for record in self._all_records():
+            if record.logical_id == logical_id:
+                unique.setdefault(record.memory_id, record)
+        return sorted(unique.values(), key=lambda r: (r.revision, r.memory_id))
 
     def current(self, logical_id: str) -> MemoryRecord | None:
         # Mutations are based only on the writable local branch. Fleet-only
@@ -141,9 +146,64 @@ class MemoryService:
         records = [record for record in self._records() if record.logical_id == logical_id]
         return max(records, key=lambda r: r.revision) if records and not max(records, key=lambda r: r.revision).is_deleted else None
 
+    def _writable_current(self, logical_id: str) -> MemoryRecord | None:
+        """Restore a cleaned fleet copy locally only when this device proves ownership."""
+        local = [record for record in self._records() if record.logical_id == logical_id]
+        if local:
+            latest = max(local, key=lambda record: record.revision)
+            return None if latest.is_deleted else latest
+        if self.state_db is None:
+            return None
+        fleet_points = [point for point in self.store.list_fleet_points()
+                        if point.payload.get("record_type") == "memory"
+                        and point.payload.get("logical_id") == logical_id]
+        if not fleet_points:
+            return None
+        point = max(fleet_points, key=lambda candidate: (int(candidate.payload.get("revision", 0)), candidate.id))
+        try:
+            record = MemoryRecord.model_validate(point.payload)
+        except Exception:
+            return None
+        if record.is_deleted or record.memory_id != point.id:
+            return None
+        with self.state_db._lock:
+            policy = self.state_db._connection.execute(
+                "SELECT logical_id,revision,sync_policy,sync_state,sensitivity,is_deleted "
+                "FROM memory_policy WHERE memory_id=?", (record.memory_id,)
+            ).fetchone()
+            outbox = self.state_db._connection.execute(
+                "SELECT logical_id,revision,status FROM sync_outbox WHERE memory_id=?", (record.memory_id,)
+            ).fetchone()
+            runs = self.state_db._connection.execute(
+                "SELECT value FROM sync_checkpoints WHERE checkpoint_id LIKE 'sync-run:%'"
+            ).fetchall()
+        if (policy is None or outbox is None
+                or policy["logical_id"] != record.logical_id or policy["revision"] != record.revision
+                or policy["sync_policy"] != SyncPolicy.AUTO.value
+                or policy["sync_state"] != SyncState.SYNCHRONIZED.value
+                or policy["sensitivity"] == "restricted" or policy["is_deleted"]
+                or outbox["logical_id"] != record.logical_id or outbox["revision"] != record.revision
+                or outbox["status"] != SyncState.SYNCHRONIZED.value):
+            return None
+        for row in runs:
+            try:
+                run = json.loads(row["value"])
+            except (TypeError, ValueError):
+                continue
+            if run.get("status") == SyncState.SYNCHRONIZED.value and any(
+                entry.get("memory_id") == record.memory_id
+                and entry.get("logical_id") == record.logical_id
+                and entry.get("revision") == record.revision
+                and entry.get("content_hash") == record.content_hash
+                for entry in run.get("acknowledged", [])
+            ):
+                self.store.upsert(point)
+                return self._overlay(record)
+        return None
+
     async def tombstone(self, logical_id: str) -> MemoryRecord:
         async with self._write_lock:
-            current = self.current(logical_id)
+            current = self._writable_current(logical_id)
             if current is None:
                 raise KeyError(logical_id)
             now = utcnow()

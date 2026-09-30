@@ -11,6 +11,7 @@ class FakeQdrant:
         self.collections = {}
         self.points = {}
         self.created = []
+        self.deleted = []
 
     def collection_exists(self, name):
         return name in self.collections
@@ -24,6 +25,12 @@ class FakeQdrant:
         for point in points:
             self.points[(collection_name, point.id)] = point
         return SimpleNamespace(operation_id=1, status="completed")
+
+    def delete(self, collection_name, points_selector, wait=True):
+        self.deleted.append((collection_name, points_selector.points, wait))
+        for point_id in points_selector.points:
+            self.points.pop((collection_name, str(point_id)), None)
+        return SimpleNamespace(operation_id=2, status="completed")
 
     def get_collection(self, name):
         if name not in self.collections:
@@ -67,6 +74,18 @@ def test_point_upsert_preserves_vectors_payload_and_replaces_identity():
     assert uploaded.vector["text"].indices == [2, 5]
     assert uploaded.vector["text"].values == [0.3, 0.8]
     assert uploaded.payload == first.payload
+
+
+def test_point_retraction_sends_only_exact_ids_and_is_idempotent():
+    remote = FakeQdrant()
+    client = QdrantServerClient("http://qdrant", collection="fleet", client=remote)
+    remote.points[("fleet", point().id)] = point()
+
+    client.delete_points([point().id])
+    client.delete_points([point().id])
+
+    assert remote.deleted == [("fleet", [point().id], True), ("fleet", [point().id], True)]
+    assert ("fleet", point().id) not in remote.points
 
 
 def test_health_classifies_network_as_offline_and_auth_as_error():

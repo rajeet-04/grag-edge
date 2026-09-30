@@ -72,5 +72,16 @@ class QdrantServerClient:
         status = getattr(result, "status", "completed")
         return RemoteAck(point.id, str(getattr(status, "value", status)), operation)
 
+    def delete_points(self, point_ids: list[str]):
+        """Idempotently retract exact remote point IDs without sending payload data."""
+        ids = sorted(set(point_ids))
+        if not ids:
+            return None
+        return self.client.delete(
+            collection_name=self.collection,
+            points_selector=models.PointIdsList(points=ids),
+            wait=True,
+        )
+
     def close(self) -> None:
         self.client.close()
