@@ -21,7 +21,7 @@ P00 is complete at `45fae76`; its regression gate accepts full green or exactly 
 - P04: PASS (`89cd809..8366e95`); native recovery fix independently reviewed PASS. Root isolated fix gate 58 edge tests, baseline-check exit 0 (258 passed, 1 skipped, exact 10 imported failures).
 - P05: PASS (`f4ddc65..6b169e8`, evidence020d997); realDockeroffline/reconnect verified; atomic worker/privacy/shutdown/attempt-history fixes independently reviewed PASS. Root actual current edge93passed1skip; baselineexit0(293passed2skip exact10).
 - P06: PASS (`181209b..231a1d6`, interleaved prerequisite fixes); root actual sync gate42/42 including live Docker/native full+partial tests; baseline306passed1skip exact10 exit0. Actual API synchronized acknowledged memory and preserved one completion across restart.
-- P07: IN PROGRESS — implementation and gates complete at `d0723e0`; awaiting re-review verdict (see p07-execution.md).
+- P07: COMPLETE (user-directed fast finish) at `53e9f1f` — tests/edge 144 passed (live), baseline-check exact 10 known failures, compose-config and diff-check clean. Boundary-B reviews 1-2 findings fixed; review 3 found N6, fixed in `53e9f1f` with a retained test; NO fourth independent review was run (user asked to finish fast). Deferred: M6, M7, N3, N4, N7 (stale 3-device conflicts stay open), N8 (fleet resolves_memory_ids trusted), and adoption of a peer resolution by the losing device (it is blocked from revise/delete with 409 instead). Task 3 tests were written after implementation (TDD deviation). See p07-execution.md.
 - P08–P12: NOT STARTED.
 
 ## Rulings

@@ -18,3 +18,8 @@ First review (Claude opus, read-only) of `231a1d6..2347890`: FAIL. Critical C1 (
 - Task 3 implementation was written before its tests, so no initial RED was observed for `tests/edge/api/test_conflicts.py`; later review fixes have genuine observed RED.
 - `gpt-6-luna` agents were not available to this session; the review used a Claude model.
 - Baseline environmental ruling: `tests/services/test_similarity_service.py::test_handle_entity_pair` is a recorded imported failure only because its live embedding call fails. With the Mac Ollama serving `nomic-embed-text` it passes, making the strict exact-set gate fail on "removed". No test or failure list was changed; the gate is run with an unavailable embedding model to reproduce the recorded conditions.
+
+## Final status
+- N6 (peer-resolved head forked/false-deleted) fixed in 53e9f1f: revise/tombstone raise "resolved by a peer" (409). Adopting the peer resolution is deferred.
+- Deferred: M6, M7, N3, N4, N7, N8. No fourth independent review (user-directed fast finish).
+- Gate: tests/edge 144 passed; baseline-check exit 0 with exactly the 10 known failures (EMBEDDING_MODEL=absent-embedding-model); make compose-config OK; git diff --check clean.
