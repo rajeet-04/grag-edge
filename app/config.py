@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # Embedding Model
     embedding_model: str = Field(default="nomic-embed-text", alias="EMBEDDING_MODEL")
 
+    # Qdrant Edge Configuration
+    qdrant_edge_path: Path = Field(
+        default=Path("./data/qdrant-edge"), alias="QDRANT_EDGE_PATH"
+    )
+    embedding_dimension: int = Field(default=768, alias="EDGE_EMBEDDING_DIMENSION")
+
     # ChromaDB Configuration
     chromadb_path: Path = Field(default=Path("./data/chromadb"), alias="CHROMADB_PATH")
 
@@ -66,6 +72,7 @@ class Settings(BaseSettings):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.chromadb_path = Path(self.chromadb_path)
+        self.qdrant_edge_path = Path(self.qdrant_edge_path)
 
     def get_neo4j_uri_with_credentials(self) -> str:
         """Get Neo4j URI with credentials for driver connection."""
