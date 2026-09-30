@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     embedding_dimension: int = Field(default=768, alias="EDGE_EMBEDDING_DIMENSION")
     edge_state_path: Path = Field(default=Path("./data/edge-state.db"), alias="EDGE_STATE_PATH")
 
+    # Qdrant Server fleet synchronization
+    qdrant_url: str = Field(default="http://localhost:6333", alias="QDRANT_URL")
+    qdrant_collection: str = Field(default="grag_fleet_memory", alias="QDRANT_COLLECTION")
+    qdrant_api_key: Optional[str] = Field(default=None, alias="QDRANT_API_KEY")
+    device_id: str = Field(default="robot-edge-001", alias="DEVICE_ID")
+    connectivity_interval_seconds: float = Field(default=5.0, alias="CONNECTIVITY_INTERVAL_SECONDS")
+    sync_interval_seconds: float = Field(default=2.0, alias="SYNC_INTERVAL_SECONDS")
+
     # ChromaDB Configuration
     chromadb_path: Path = Field(default=Path("./data/chromadb"), alias="CHROMADB_PATH")
 
