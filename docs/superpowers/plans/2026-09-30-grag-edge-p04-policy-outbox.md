@@ -57,17 +57,21 @@
 - Create: `app/edge/state/sqlite.py`
 - Create: `app/edge/sync/__init__.py`
 - Create: `app/edge/sync/outbox.py`
+- Create: `app/edge/state/activity.py`
 - Modify: `app/config.py`
 - Test: `tests/edge/sync/test_outbox.py`
+- Test: `tests/edge/state/test_activity.py`
 
 **Interfaces:**
 - Produce: `EdgeStateDB(path: Path)` migrations for `sync_outbox`, `sync_attempts`, `sync_checkpoints`, `activity_events`, `device_state`, `conflicts`.
 - Produce: `SyncOutbox.enqueue(memory_id: str, logical_id: str, revision: int) -> OutboxItem`.
 - Produce: `pending(limit: int) -> list[OutboxItem]`, `mark_uploading(id)`, `mark_retry(id, error)`, `mark_uploaded(id)`.
 - Enforce one active outbox item per `(logical_id, revision)`.
+- Produce: `ActivityEvent(event_id: str, event_type: str, device_id: str, memory_id: str | None, timestamp: datetime, severity: str, message: str, metadata: dict[str, Any])`.
+- Produce: `ActivityLog.append(event: ActivityEvent) -> None`, `list(limit: int, before: datetime | None = None) -> list[ActivityEvent]`, `latest_id() -> str | None`.
 
-- [ ] **Step 1: Write persistence/idempotency tests**
-  Close and reopen SQLite between enqueue and read; assert row survives and duplicate enqueue returns the existing active item.
+- [ ] **Step 1: Write persistence/idempotency/activity tests**
+  Close and reopen SQLite between enqueue and read; assert row survives, duplicate enqueue returns the existing active item, and appended ActivityEvent records retain ordering and metadata across reopen.
 - [ ] **Step 2: Run**
   Run: `uv run pytest tests/edge/sync/test_outbox.py -v`
   Expected: FAIL.
@@ -90,9 +94,10 @@
 - Produce: `POST /api/v1/edge/sync/{memory_id}/reject`.
 - Produce: `GET /api/v1/edge/sync/queue`.
 - Creating/revising a memory stores the final policy reason and creates outbox work only for AUTO or approved records.
+- Emit `MEMORY_CREATED` / `MEMORY_REVISED`, `POLICY_LOCAL_ONLY`, `POLICY_SYNC_APPROVED`, and `SYNC_QUEUED` activity events at the owning transition.
 
 - [ ] **Step 1: Write workflow tests**
-  Assert restricted memory never enters queue, approval-required memory queues only after approval, reject sets local-only outcome, and duplicate approval is idempotent.
+  Assert restricted memory never enters queue, approval-required memory queues only after approval, reject sets local-only outcome, duplicate approval is idempotent, and each transition emits exactly one corresponding activity event.
 - [ ] **Step 2: Run**
   Expected: FAIL.
 - [ ] **Step 3: Implement workflow**
