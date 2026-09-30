@@ -23,7 +23,8 @@ P00 is complete at `45fae76`; its regression gate accepts full green or exactly 
 - P06: PASS (`181209b..231a1d6`, interleaved prerequisite fixes); root actual sync gate42/42 including live Docker/native full+partial tests; baseline306passed1skip exact10 exit0. Actual API synchronized acknowledged memory and preserved one completion across restart.
 - P07: COMPLETE (user-directed fast finish) at `53e9f1f` — tests/edge 144 passed (live), baseline-check exact 10 known failures, compose-config and diff-check clean. Boundary-B reviews 1-2 findings fixed; review 3 found N6, fixed in `53e9f1f` with a retained test; NO fourth independent review was run (user asked to finish fast). Deferred: M6, M7, N3, N4, N7 (stale 3-device conflicts stay open), N8 (fleet resolves_memory_ids trusted), and adoption of a peer resolution by the losing device (it is blocked from revise/delete with 409 instead). Task 3 tests were written after implementation (TDD deviation). See p07-execution.md.
 - P08: COMPLETE (user-directed fast finish) at `6a02061` (`8614dc2`, `513d959`, `6a02061`) — tests/edge 144 passed, baseline-check exit 0 (360 passed, 1 skipped, exact 10 imported failures, known-failures file unchanged), compose-config and diff-check clean; offline streaming/non-streaming acceptance passes with Qdrant Server/Neo4j down and cloud unset; ChromaDB fully removed. No independent P08 review was run. See p08-execution.md.
-- P09–P12: NOT STARTED.
+- P09: COMPLETE (user-directed fast finish) at `00e3f50` (`eb95123`, `30a8501`, `04ba28b`, `00e3f50`) — frontend vitest 16/16, `tsc --noEmit` and `vite build` clean, frontend Docker image builds; tests/edge 144 passed, baseline-check exit 0 (360 passed, 1 skipped, exact 10 imported failures), compose-config and diff-check clean. No Playwright browser smoke test and no independent review. See p09-execution.md.
+- P10–P12: NOT STARTED.
 
 ## Rulings
 
