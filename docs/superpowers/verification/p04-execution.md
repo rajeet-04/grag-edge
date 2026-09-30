@@ -22,7 +22,7 @@ Branch: `codex/grag-edge-p00-baseline`
 - GREEN: the final command passed, 8 tests. Coverage exercises the real `EdgeRuntime` through FastAPI lifespan, policy precedence, explicit versus inferred policy, one-time approval/rejection events, stale approval rejection, GET queue, SQLite failure after the durable Qdrant write, reopened-database startup reconciliation, and concurrent approval idempotency.
 - The SQLite failure test verifies the request returns 503, the persisted Qdrant record remains `LOCAL_DIRTY`, and no outbox row is exposed until `EdgeRuntime.start()` reconciles the record. Repeating startup reconciliation does not duplicate queue rows or events.
 - SQLite stores only policy metadata and operational state; the test checks the policy table has no content or vector columns. Policy, outbox, and activity writes share one transaction.
-- Commit: `PENDING` (planned message: `feat: connect sync policy to durable outbox`).
+- Commit: `1b8b74a feat: connect sync policy to durable outbox`.
 
 ## Final phase gate
 

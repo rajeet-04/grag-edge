@@ -18,8 +18,9 @@ P00 is complete at `45fae76`; its regression gate accepts full green or exactly 
 - P01: PASS (`7ef0217..213b766`); root gate `uv run pytest tests/edge/memory -v`: 6/6; real native reopen persistence verified.
 - P02: PASS (`f5e10a4..964e306`); root planned retrieval gate 7/7, all memory tests 13/13.
 - P03: PASS (`0cc767c..26166e3`); root native edge gate 33/33; root baseline-check exit 0 (233 passed, 1 skipped, exact 10 imported failures). Independent boundary A re-review at 26166e3 passed all five Important fixes, native 768-dimensional persistence and fleet immutability.
-- P04: IN PROGRESS.
-- P05–P12: NOT STARTED.
+- P04: PASS (`89cd809..1b8b74a`); root actual edge gate 55/55 and baseline-check exit 0 (255 passed, 1 skipped, exact 10 imported failures).
+- P05: IN PROGRESS.
+- P06–P12: NOT STARTED.
 
 ## Rulings
 
@@ -36,3 +37,7 @@ Boundary A at0617c4a: concurrency permits immutable overwrite/duplicate revision
 Ruling: Persisted default LOCAL_ONLY cannot distinguish explicit operator intent from an omitted policy → add nullable requested operator policy separately from effective decision → spec requires explicit local_only precedence while incident/learned-fact auto rules remain reachable → risk if wrong: unintended upload eligibility; privacy/explicit-policy tests and upload-boundary rechecks are mandatory.
 
 Ruling: Qdrant Edge and SQLite cannot participate in one atomic transaction → immutable Qdrant revision flushes LOCAL_DIRTY first; SQLite transaction owns effective policy/state, outbox and idempotent activity; reads overlay committed control metadata and startup reconciles missing control rows → searchable content stays in Edge and QUEUED is never published without durable work → risk if wrong: crash-gap orphan or misleading state; injected commit failures and restart reconciliation tests required.
+
+Runtime preflight: root verified actual Docker Engine29.8.1 Linuxaarch64 overlay2 and real nomic-embed-text 768-dimensional response. Runtime agent verified real CPU qwen3.5:0.8b chat, Qdrant1.17.1 internal HTTP200 and final Engine network disconnect/reconnect. Task-local runtime details: /private/tmp/grag-edge-runtime/README.md.
+
+P06 API preparation: /private/tmp/grag-edge-p06-api-notes.md records verified native0.8 snapshot signatures, server singular full/partial binary endpoints, staging requirements and atomic generation publication. Live server/Edge format compatibility remains P06 gate.
