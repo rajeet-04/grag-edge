@@ -32,22 +32,22 @@
 - Create: `Makefile`
 - Create: `scripts/dev/verify_baseline.sh`
 - Modify: `.gitignore`
-- Modify: `env.example`
+- Modify: `.env.example`
 
 **Interfaces:**
 - Produces: `make test`, `make compose-config`, `make baseline-check`.
-- Produces: `scripts/dev/verify_baseline.sh` returning non-zero on failed tests or invalid Compose configuration.
+- Produces: `scripts/dev/verify_baseline.sh` returning non-zero on invalid Compose/topology checks or on any pytest regression relative to the recorded imported baseline. The exact imported-baseline failing node IDs are stored in `docs/superpowers/verification/2026-09-30-grag-edge-p00-known-failures.txt`.
 
 - [ ] **Step 1: Write the verification expectations**
-  Add shell-level checks in `scripts/dev/verify_baseline.sh` for `uv run pytest -q` and `docker compose config -q`; assert failures propagate.
+  Add shell-level checks in `scripts/dev/verify_baseline.sh` for `uv run pytest -q` and `docker compose config -q`. Capture pytest failing node IDs and compare them against `docs/superpowers/verification/2026-09-30-grag-edge-p00-known-failures.txt`: exact match is an accepted imported baseline; any new, missing, or changed failing node ID is a regression and must return non-zero.
 - [ ] **Step 2: Run the script before Make targets exist**
   Run: `bash scripts/dev/verify_baseline.sh`
   Expected: FAIL at the missing/unfinished command surface.
 - [ ] **Step 3: Implement the command surface**
-  Add exact Make targets `test`, `compose-config`, and `baseline-check`. Extend `.gitignore` for `data/qdrant-edge/`, `data/edge-state.db*`, `frontend/node_modules/`, and built frontend output. Keep `env.example` secret-free.
+  Add exact Make targets `test`, `compose-config`, and `baseline-check`. Extend `.gitignore` for `data/qdrant-edge/`, `data/edge-state.db*`, `frontend/node_modules/`, and built frontend output. Keep `.env.example` secret-free. Record the exact imported-baseline failing pytest node IDs in `docs/superpowers/verification/2026-09-30-grag-edge-p00-known-failures.txt` and keep the human-readable verification report alongside it.
 - [ ] **Step 4: Verify**
   Run: `make baseline-check`
-  Expected: existing pytest suite passes or any pre-existing failure is explicitly documented before proceeding; Compose config validates.
+  Expected: Compose config validates and pytest is either fully green or has exactly the recorded imported-baseline failure set with no regression.
 - [ ] **Step 5: Commit**
   Commit: `chore: establish reproducible GRAG Edge baseline`
 
@@ -70,7 +70,7 @@
   Do not add `grag-cloud-net` or Qdrant Server yet.
 - [ ] **Step 4: Verify**
   Run: `make baseline-check`
-  Expected: PASS.
+  Expected: PASS when Compose/topology checks succeed and pytest is either green or exactly matches the recorded imported-baseline failure set.
 - [ ] **Step 5: Commit**
   Commit: `chore: name GRAG Edge local network`
 
