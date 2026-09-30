@@ -224,6 +224,7 @@ class MemoryService:
             values.update(memory_id=conflict.resolution_memory_id, content=content, updated_at=utcnow(),
                 revision=top + 1, parent_revision=top, content_hash=self.content_hash(content), is_deleted=False,
                 source_type="conflict_resolution", source_id=conflict.conflict_id,
+                resolves_memory_ids=(conflict.local_memory_id, conflict.fleet_memory_id),
                 requested_sync_policy=base.requested_sync_policy, sync_policy=SyncPolicy.LOCAL_ONLY,
                 sync_state=SyncState.LOCAL_DIRTY, sync_reason_codes=())
             record = MemoryRecord(**values)

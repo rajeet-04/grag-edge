@@ -126,3 +126,62 @@ def test_merge_retry_with_different_content_is_rejected(tmp_path):
         assert memories.get(first.resolution_memory_id).content == "merged one"
 
     asyncio.run(run())
+
+
+def device(tmp_path, name, remote):
+    from app.edge.memory.service import MemoryService
+    from app.edge.state.activity import ActivityLog
+    from app.edge.state.sqlite import EdgeStateDB
+    from app.edge.sync.outbox import SyncOutbox
+    from app.edge.sync.service import SyncService
+    from test_sync_retractions import Embeddings, Snapshots, Store
+    store, db = Store(), EdgeStateDB(tmp_path / f"{name}.db")
+    activity, outbox = ActivityLog(db), SyncOutbox(db)
+    memories = MemoryService(store, Embeddings(), db)
+    sync = SyncService(store, memories, outbox, db, activity, remote, name, embedding_dimension=4,
+                       snapshots=Snapshots(store, remote, db), conflicts=ConflictService(db, activity))
+    return store, memories, sync
+
+
+def test_resolution_on_one_device_does_not_conflict_or_reopen_on_the_other(tmp_path):
+    from test_sync_retractions import Remote
+    remote = Remote()
+    store_a, mem_a, sync_a = device(tmp_path, "a", remote)
+    store_b, mem_b, sync_b = device(tmp_path, "b", remote)
+    ids = dict(memory_id="00000000-0000-0000-0000-00000000000a", logical_id="00000000-0000-0000-0000-00000000000b")
+
+    async def run():
+        for mem in (mem_a, mem_b):
+            await mem.create(CreateMemory(content="shared safe base", memory_type=MemoryType.LEARNED_FACT, **ids))
+        await sync_a.run_once(); await sync_b.run_once()
+        a2 = await mem_a.revise(ids["logical_id"], ReviseMemory(content="branch from a", parent_revision=1))
+        b2 = await mem_b.revise(ids["logical_id"], ReviseMemory(content="branch from b", parent_revision=1))
+        for sync in (sync_a, sync_b, sync_a, sync_b):
+            await sync.run_once()
+        assert len(sync_a.conflicts.list_open()) == 1 and len(sync_b.conflicts.list_open()) == 1
+        resolved = await sync_a.conflicts.resolve(sync_a.conflicts.list_open()[0].conflict_id, "KEEP_LOCAL", mem_a)
+        await sync_a.run_once(); await sync_b.run_once(); await sync_b.run_once()
+        assert resolved.resolution_memory_id in store_b.fleet
+        assert sync_a.conflicts.list_open() == []
+        assert sync_b.conflicts.list_open() == []
+        assert mem_b.get(b2.memory_id).sync_state is not SyncState.CONFLICTED
+
+    asyncio.run(run())
+
+
+def test_superseded_open_conflict_is_closed_by_scan(tmp_path):
+    store, db, activity, outbox, memories, remote, snapshots, sync = fresh(tmp_path)
+
+    async def run():
+        record = await memories.create(CreateMemory(content="fleet safe proc v1", memory_type=MemoryType.LEARNED_FACT))
+        await sync.run_once()
+        local2 = await memories.revise(record.logical_id, ReviseMemory(content="local v2", parent_revision=1))
+        other_branch(remote, local2, "00000000-0000-0000-0000-0000000000f5", "other v2")
+        await snapshots.refresh()
+        await sync.run_once()
+        assert len(sync.conflicts.list_open()) == 1
+        await memories.revise(record.logical_id, ReviseMemory(content="local v3", parent_revision=2))
+        await sync.run_once()
+        assert [c.local_revision for c in sync.conflicts.list_open()] == [3]
+
+    asyncio.run(run())

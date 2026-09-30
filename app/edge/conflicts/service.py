@@ -132,6 +132,14 @@ class ConflictService:
         revision, so ambiguous branch numbers never prove ancestry.
         """
         records = list(history)
+        if ancestor_id in head.resolves_memory_ids:
+            return True
+        by_id = {r.memory_id: r for r in records}
+        # A resolution supersedes both branches it names, plus their ancestry.
+        for resolved_id in head.resolves_memory_ids:
+            resolved = by_id.get(resolved_id)
+            if resolved is not None and ConflictService._descends(resolved, ancestor_id, records):
+                return True
         current = head
         for _ in range(len(records) + 1):
             if current.parent_revision is None:
@@ -239,9 +247,12 @@ class ConflictService:
         return self._record_from_row(row) if row is not None else None
 
     def open_count(self) -> int:
-        with self.db._lock:
-            pass
         return len(self.list_open())
+
+    def close_stale(self, conflict_id: str) -> None:
+        """Close a conflict whose branches were superseded by a newer head or a resolution."""
+        with self.db.transaction() as conn:
+            conn.execute("UPDATE conflicts SET status='STALE' WHERE conflict_id=? AND status='OPEN'", (conflict_id,))
 
     def open_logical_ids(self) -> set[str]:
         return {conflict.logical_id for conflict in self.list_open()}

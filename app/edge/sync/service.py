@@ -398,6 +398,17 @@ class SyncService:
                 except Exception:
                     continue
         found = 0
+        for conflict in self.conflicts.list_open():
+            head = heads.get(conflict.logical_id)
+            resolved_ids = {i for r in fleet_by_logical.get(conflict.logical_id, []) for i in r.resolves_memory_ids}
+            if conflict.status == "OPEN" and (
+                    (head is not None and head.memory_id != conflict.local_memory_id)
+                    or {conflict.local_memory_id, conflict.fleet_memory_id} <= resolved_ids):
+                self.conflicts.close_stale(conflict.conflict_id)
+                if head is not None and head.memory_id == conflict.local_memory_id:
+                    with self.db.transaction() as conn:
+                        conn.execute("UPDATE memory_policy SET sync_state='SUPERSEDED',updated_at=? WHERE memory_id=? AND sync_state='CONFLICTED'",
+                                     (datetime.now(timezone.utc).isoformat(), head.memory_id))
         for logical_id, local in heads.items():
             fleet_records = fleet_by_logical.get(logical_id)
             if not fleet_records or local.is_deleted or local.sync_state not in self._SCAN_STATES:
@@ -405,7 +416,9 @@ class SyncService:
             own_ids = self._own_memory_ids(logical_id)
             local_history = [r for r in local_records if r.logical_id == logical_id]
             local_history += [r for r in fleet_records if r.memory_id in own_ids and r.memory_id not in {h.memory_id for h in local_history}]
-            tips = [r for r in fleet_records if not any(c.parent_revision == r.revision and c.revision > r.revision for c in fleet_records)]
+            tips = [r for r in fleet_records if not any(
+                (c.parent_revision == r.revision and c.revision > r.revision) or r.memory_id in c.resolves_memory_ids
+                for c in fleet_records)]
             for fleet in sorted(tips, key=lambda r: (r.revision, r.memory_id)):
                 if fleet.memory_id == local.memory_id:
                     continue

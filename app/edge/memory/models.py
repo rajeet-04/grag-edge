@@ -74,6 +74,7 @@ class MemoryRecord(BaseModel):
     embedding_version: str = "default"
     sync_timestamp: datetime | None = None
     is_deleted: bool = False
+    resolves_memory_ids: tuple[str, ...] = ()
 
 
 class CreateMemory(BaseModel):
