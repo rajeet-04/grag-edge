@@ -52,7 +52,7 @@ def native_api(tmp_path, monkeypatch):
         return fleet, obsolete, live
 
     fleet, obsolete, live = asyncio.run(seed())
-    runtime = EdgeRuntime(make_store(tmp_path), DelayedEmbeddings())
+    runtime = EdgeRuntime(make_store(tmp_path), DelayedEmbeddings(), state_path=tmp_path / "state.db")
 
     import app.edge.runtime as runtime_module
     import app.database.neo4j_client as neo4j_module

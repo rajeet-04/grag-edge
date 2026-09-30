@@ -13,9 +13,9 @@ class Store:
     def query_sparse(self, *_): return []
 
 
-def test_runtime_owns_one_store_and_closes_it():
+def test_runtime_owns_one_store_and_closes_it(tmp_path):
     store = Store()
-    runtime = EdgeRuntime(store=store)
+    runtime = EdgeRuntime(store=store, state_path=tmp_path / "state.db")
     assert runtime.memories.store is store
     assert runtime.search is not None
     import asyncio

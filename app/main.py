@@ -60,6 +60,7 @@ async def lifespan(app: FastAPI):
 
     neo4j_client = get_neo4j_client()
     try:
+        await edge_runtime.start()
         connected = await neo4j_client.verify_connectivity()
         if connected:
             logger.info("app.neo4j.connected")
@@ -100,6 +101,8 @@ app.include_router(review_queue_router, prefix="/api/v1", tags=["review-queue"])
 app.include_router(openai_router, prefix="/v1", tags=["openai"])
 from app.edge.api.memories import router as edge_router
 app.include_router(edge_router, prefix="/api/v1")
+from app.edge.api.sync import router as edge_sync_router
+app.include_router(edge_sync_router, prefix="/api/v1")
 
 
 @app.get("/health", response_model=HealthStatus)

@@ -82,11 +82,18 @@ class EdgeStateDB:
                     sync_policy TEXT NOT NULL,
                     sync_state TEXT NOT NULL,
                     reason_codes_json TEXT NOT NULL,
+                    sensitivity TEXT NOT NULL DEFAULT 'fleet_safe',
+                    is_deleted INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL
                 );
-                CREATE INDEX IF NOT EXISTS memory_policy_logical ON memory_policy(logical_id, revision);
                 """
             )
+            policy_columns = {row["name"] for row in self._connection.execute("PRAGMA table_info(memory_policy)")}
+            if "sensitivity" not in policy_columns:
+                self._connection.execute("ALTER TABLE memory_policy ADD COLUMN sensitivity TEXT NOT NULL DEFAULT 'fleet_safe'")
+            if "is_deleted" not in policy_columns:
+                self._connection.execute("ALTER TABLE memory_policy ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0")
+            self._connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS memory_policy_revision ON memory_policy(logical_id, revision)")
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:

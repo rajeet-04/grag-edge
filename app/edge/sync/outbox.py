@@ -47,27 +47,32 @@ class SyncOutbox:
         return row
 
     def enqueue(self, memory_id: str, logical_id: str, revision: int) -> OutboxItem:
-        now, candidate_id = _now(), str(uuid4())
         with self.db.transaction() as conn:
-            row = conn.execute(
-                "SELECT * FROM sync_outbox WHERE logical_id = ? AND revision = ?",
-                (logical_id, revision),
-            ).fetchone()
-            if row is not None:
-                if row["memory_id"] != memory_id:
-                    raise ValueError("outbox identity collision for logical_id/revision")
-                return self._item(row)
-            row = conn.execute("SELECT * FROM sync_outbox WHERE memory_id = ?", (memory_id,)).fetchone()
-            if row is not None:
-                if row["logical_id"] != logical_id or row["revision"] != revision:
-                    raise ValueError("outbox identity collision for memory_id")
-                return self._item(row)
-            conn.execute(
-                "INSERT INTO sync_outbox(id,memory_id,logical_id,revision,status,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?)",
-                (candidate_id, memory_id, logical_id, revision, "QUEUED", now, now),
-            )
-            return self._item(self._select(conn, candidate_id))
+            row = self.enqueue_in_transaction(conn, memory_id, logical_id, revision)
+            return self._item(row)
+
+    @staticmethod
+    def enqueue_in_transaction(conn: sqlite3.Connection, memory_id: str, logical_id: str, revision: int) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM sync_outbox WHERE logical_id = ? AND revision = ?",
+            (logical_id, revision),
+        ).fetchone()
+        if row is not None:
+            if row["memory_id"] != memory_id:
+                raise ValueError("outbox identity collision for logical_id/revision")
+            return row
+        row = conn.execute("SELECT * FROM sync_outbox WHERE memory_id = ?", (memory_id,)).fetchone()
+        if row is not None:
+            if row["logical_id"] != logical_id or row["revision"] != revision:
+                raise ValueError("outbox identity collision for memory_id")
+            return row
+        now, candidate_id = _now(), str(uuid4())
+        conn.execute(
+            "INSERT INTO sync_outbox(id,memory_id,logical_id,revision,status,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (candidate_id, memory_id, logical_id, revision, "QUEUED", now, now),
+        )
+        return conn.execute("SELECT * FROM sync_outbox WHERE id=?", (candidate_id,)).fetchone()
 
     def pending(self, limit: int) -> list[OutboxItem]:
         if limit <= 0:

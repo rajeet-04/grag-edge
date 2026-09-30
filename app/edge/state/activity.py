@@ -29,22 +29,26 @@ class ActivityLog:
 
     def append(self, event: ActivityEvent) -> None:
         with self.db.transaction() as conn:
-            row = conn.execute("SELECT * FROM activity_events WHERE event_id=?", (event.event_id,)).fetchone()
-            values = (
-                event.event_type, event.device_id, event.memory_id, event.timestamp.isoformat(),
-                event.severity, event.message, json.dumps(event.metadata, sort_keys=True),
-            )
-            if row is not None:
-                existing = tuple(row[name] for name in (
-                    "event_type", "device_id", "memory_id", "timestamp", "severity", "message", "metadata_json"
-                ))
-                if existing != values:
-                    raise ValueError("activity event identity collision")
-                return
-            conn.execute(
-                "INSERT INTO activity_events(event_id,event_type,device_id,memory_id,timestamp,severity,message,metadata_json) "
-                "VALUES(?,?,?,?,?,?,?,?)", (event.event_id, *values),
-            )
+            self.append_in_transaction(conn, event)
+
+    @staticmethod
+    def append_in_transaction(conn, event: ActivityEvent) -> None:
+        row = conn.execute("SELECT * FROM activity_events WHERE event_id=?", (event.event_id,)).fetchone()
+        values = (
+            event.event_type, event.device_id, event.memory_id, event.timestamp.isoformat(),
+            event.severity, event.message, json.dumps(event.metadata, sort_keys=True),
+        )
+        if row is not None:
+            existing = tuple(row[name] for name in (
+                "event_type", "device_id", "memory_id", "timestamp", "severity", "message", "metadata_json"
+            ))
+            if existing != values:
+                raise ValueError("activity event identity collision")
+            return
+        conn.execute(
+            "INSERT INTO activity_events(event_id,event_type,device_id,memory_id,timestamp,severity,message,metadata_json) "
+            "VALUES(?,?,?,?,?,?,?,?)", (event.event_id, *values),
+        )
 
     @staticmethod
     def _event(row) -> ActivityEvent:

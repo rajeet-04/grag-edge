@@ -8,7 +8,7 @@ from tests.edge.memory.test_memory_service import Store, Embeddings
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, tmp_path):
     import app.edge.runtime as runtime_module
     import app.database.neo4j_client as neo4j_module
     import app.schemas.graph_schema as graph_module
@@ -18,7 +18,7 @@ def client(monkeypatch):
     def new_runtime():
         store = Store()
         stores.append(store)
-        return EdgeRuntime(store, Embeddings())
+        return EdgeRuntime(store, Embeddings(), state_path=tmp_path / "state.db")
     monkeypatch.setattr(runtime_module, "EdgeRuntime", new_runtime)
     class Neo4j:
         async def verify_connectivity(self): return False
@@ -40,7 +40,7 @@ def test_memory_create_get_revise_and_filters(client):
     assert client.get(f"/api/v1/edge/memories/{item['memory_id']}").json()["content"] == "bearing vibration"
     revised = client.patch(f"/api/v1/edge/memories/{item['memory_id']}", json={"content":"bearing vibration severe", "parent_revision":1})
     assert revised.status_code == 200 and revised.json()["revision"] == 2
-    for params in ({"source":"sensor"}, {"memory_type":"observation"}, {"sync_state":"LOCAL_DIRTY"}, {"importance":"high"}, {"device_id":"robot-7"}, {"tag":"bearing"}, {"from_time":"2000-01-01T00:00:00Z"}, {"to_time":"2100-01-01T00:00:00Z"}):
+    for params in ({"source":"sensor"}, {"memory_type":"observation"}, {"sync_state":"LOCAL_ONLY"}, {"importance":"high"}, {"device_id":"robot-7"}, {"tag":"bearing"}, {"from_time":"2000-01-01T00:00:00Z"}, {"to_time":"2100-01-01T00:00:00Z"}):
         assert len(client.get("/api/v1/edge/memories", params=params).json()) == 1
     assert client.get("/api/v1/edge/memories", params={"device_id":"other"}).json() == []
 
