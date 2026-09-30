@@ -102,4 +102,4 @@ origin FLEET from `ROBOT-01`.
 
 ## Verification record
 
-Verified commit: see the final section, filled in by the submission verification commit.
+Verified product commit `c0d8f06`: `make demo-acceptance` passed twice from reset, `make demo-robot-b` passed, backend suites, frontend tests/build and `make baseline-check` passed (see docs/superpowers/verification/p12-execution.md).

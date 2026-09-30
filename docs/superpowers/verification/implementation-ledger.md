@@ -26,7 +26,11 @@ P00 is complete at `45fae76`; its regression gate accepts full green or exactly 
 - P09: COMPLETE (user-directed fast finish) at `00e3f50` (`eb95123`, `30a8501`, `04ba28b`, `00e3f50`) — frontend vitest 16/16, `tsc --noEmit` and `vite build` clean, frontend Docker image builds; tests/edge 144 passed, baseline-check exit 0 (360 passed, 1 skipped, exact 10 imported failures), compose-config and diff-check clean. No Playwright browser smoke test and no independent review. See p09-execution.md.
 - P10: COMPLETE (user-directed fast finish) at `8a0ce30` (`83cab2d`, `402e9aa`, `8a0ce30`) — make demo-acceptance passed twice from reset with real Docker network cut; tests/demo 20, tests/edge 144, baseline-check exit 0 (380 passed, 1 skipped, exact 10 imported failures), compose-config and diff-check clean. See p10-execution.md.
 - P11: COMPLETE (stretch, user-directed fast finish) at `652f375` (`cc2cefe`, `652f375`) — make demo-robot-b passed twice from reset (B receives A's offline memory as FLEET from ROBOT-01); tests/demo 27, tests/edge 144, baseline-check exit 0, demo-acceptance passes. See p11-execution.md.
-- P12: NOT STARTED.
+- P12: COMPLETE (user-directed fast finish) at `c0d8f06` (`439c9cd`, `7038682`, `c0d8f06`, plus verification record) — tests/edge+demo+e2e+performance 202 passed, frontend 16/16 + build, compose-config, diff-check clean, baseline-check exit 0 (400 passed, 1 skipped, exact 10 imported failures), make demo-acceptance passed twice, demo-robot-b passed, secret scan clean. No independent P12 review. See p12-execution.md.
+
+## Final summary
+
+All phases P00-P12 are complete on `codex/grag-edge-p00-baseline`; nothing was pushed. Deferred items carried from P07-P11 (listed in p12-execution.md): P07 M6/M7/N3/N4/N7/N8 and peer-resolution adoption; P08 no relevance threshold, query-agent error routing, legacy ranker docstrings; P09 no browser/a11y audit; P10 dense-only fleet seeds and docker-exec API access; P11 Robot B checkpoint restart untested. Independent reviews after P07-P12 were skipped by user direction. The 10 imported baseline failures are intentionally unfixed.
 
 ## Rulings
 
