@@ -30,7 +30,7 @@ P00 is complete at `45fae76`; its regression gate accepts full green or exactly 
 
 ## Final summary
 
-All phases P00-P12 are complete on `codex/grag-edge-p00-baseline`; nothing was pushed. Deferred items carried from P07-P11 (listed in p12-execution.md): P07 M6/M7/N3/N4/N7/N8 and peer-resolution adoption; P08 no relevance threshold, query-agent error routing, legacy ranker docstrings; P09 no browser/a11y audit; P10 dense-only fleet seeds and docker-exec API access; P11 Robot B checkpoint restart untested. Independent reviews after P07-P12 were skipped by user direction. The 10 imported baseline failures are intentionally unfixed.
+All phases P00-P12 are complete on `codex/grag-edge-p00-baseline`; nothing was pushed. Post-P12 follow-up fixed P08 relevance threshold and query-agent error routing, P07 N6 adoption, N7 and N8 (bounded), P11 Robot B restart test, automated <2s connectivity check, and a Playwright console smoke test (see p12-execution.md). Still deferred: P07 M6/M7/N3/N4; P08 legacy ranker docstrings; P09 a11y/contrast audit; P10 dense-only fleet seeds and docker-exec API access. Independent reviews after P07-P12 were skipped by user direction. The 10 imported baseline failures are intentionally unfixed.
 
 ## Rulings
 
