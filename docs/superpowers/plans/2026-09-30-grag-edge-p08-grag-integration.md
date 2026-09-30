@@ -13,6 +13,7 @@
 ## Global Constraints
 - Cloud Qdrant must be absent/unreachable in the offline reasoning acceptance test.
 - Neo4j failure cannot block Qdrant Edge retrieval or local answer generation.
+- The required demo path must not require `OLLAMA_CLOUD_API_KEY` or any external LLM credential; local Ollama is the default for query, extraction, context/explanation, and answer generation.
 - Existing `POST /v1/chat/completions` remains compatible.
 - ChromaDB production code/config/container volume is removed by phase end.
 - Exit gate: GRAG answers with Qdrant Edge evidence while cloud is disconnected.
@@ -55,15 +56,23 @@
 **Files:**
 - Modify: `app/agents/graph.py`
 - Modify: `app/retrieval/fallback.py`
+- Modify: `app/llm/ollama_client.py`
+- Modify: `app/agents/query_agent.py`
+- Modify: `app/agents/explanation_agent.py`
+- Modify: `app/ingestion/entity_extractor.py`
+- Modify: `app/ingestion/relation_extractor.py`
+- Modify where applicable: `app/agents/context_builder.py`
 - Test: `tests/e2e/test_edge_offline_pipeline.py`
+- Test: `tests/integration/test_local_ollama_paths.py`
 
 **Interfaces:**
 - Edge retrieval always runs for query mode.
 - Neo4j result is additive when available; its failure contributes a trace event but does not clear edge hits.
 - Vector fallback no longer reaches ChromaDB.
+- Core services instantiate local `OllamaClient(use_cloud=False)` by default; any cloud mode remains explicit opt-in only and is not used by the required demo or offline acceptance path.
 
-- [ ] **Step 1: Write offline E2E test**
-  With Qdrant Server and Neo4j unavailable, seed local Edge memory and assert a question receives an answer whose evidence includes LOCAL memory.
+- [ ] **Step 1: Write offline/local-inference E2E tests**
+  With Qdrant Server and Neo4j unavailable and with all cloud API keys unset, seed local Edge memory and assert a question receives an answer whose evidence includes LOCAL memory. Assert query, entity extraction, relation extraction, explanation/context, and streaming answer paths do not instantiate `OllamaClient(use_cloud=True)` in the required local mode.
 - [ ] **Step 2: Run**
   Expected: FAIL.
 - [ ] **Step 3: Refactor orchestration**
