@@ -47,3 +47,16 @@ class RawSearchHit:
     score: float
     origin: MemoryOrigin
     payload: dict[str, Any]
+
+
+class SearchableEdgeMemoryStore(EdgeMemoryStore, Protocol):
+    """Backend-neutral extensions required by retrieval coordinators."""
+
+    def embed_bm25_document(self, text: str) -> Any: ...
+    def embed_bm25_query(self, text: str) -> Any: ...
+    def query_dense(
+        self, vector: list[float], limit: int, origin: MemoryOrigin
+    ) -> list[RawSearchHit]: ...
+    def query_sparse(
+        self, vector: Any, limit: int, origin: MemoryOrigin
+    ) -> list[RawSearchHit]: ...
