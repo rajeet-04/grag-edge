@@ -204,15 +204,21 @@ class MemoryService:
     async def write_resolution(self, conflict: Any, content: str) -> MemoryRecord:
         """Idempotently write the resolution revision above both conflict branches."""
         async with self._write_lock:
+            from app.edge.conflicts.service import ConflictResolutionError, StaleConflictError
             existing = self.store.retrieve(conflict.resolution_memory_id)
             if existing is not None:
                 recovered = MemoryRecord.model_validate(existing.payload)
+                if recovered.content_hash != self.content_hash(content):
+                    raise ConflictResolutionError("conflict already resolving with different content")
                 if self.policy_workflow is not None and self.policy_workflow.get(recovered.memory_id) is None:
                     return self._commit_policy(recovered, "MEMORY_REVISED")
                 return self._overlay(recovered)
             base = self.get(conflict.local_memory_id)
             if base is None:
                 raise KeyError(conflict.local_memory_id)
+            head = max((r for r in self._records() if r.logical_id == conflict.logical_id), key=lambda r: r.revision, default=None)
+            if head is None or head.memory_id != conflict.local_memory_id or head.is_deleted:
+                raise StaleConflictError(conflict.conflict_id)
             top = max(conflict.local_revision, conflict.fleet_revision)
             values = base.model_dump()
             values.update(memory_id=conflict.resolution_memory_id, content=content, updated_at=utcnow(),

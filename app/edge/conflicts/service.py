@@ -23,6 +23,10 @@ class ConflictResolutionError(ValueError):
     """Raised when a resolution request is invalid or contradicts a prior one."""
 
 
+class StaleConflictError(ConflictResolutionError):
+    """The local branch moved on after the conflict was detected."""
+
+
 class ConflictRecord(BaseModel):
     """Control-plane metadata describing two retained memory revisions.
 
@@ -120,6 +124,26 @@ class ConflictService:
             return None
         return record.model_copy(update={"status": row["status"]})
 
+    @staticmethod
+    def _descends(head: MemoryRecord, ancestor_id: str, history: Iterable[MemoryRecord]) -> bool:
+        """Prove `ancestor_id` lies on head's parent chain from retained records.
+
+        A step is followed only when exactly one retained record has the parent
+        revision, so ambiguous branch numbers never prove ancestry.
+        """
+        records = list(history)
+        current = head
+        for _ in range(len(records) + 1):
+            if current.parent_revision is None:
+                return False
+            parents = [r for r in records if r.revision == current.parent_revision and r.memory_id != current.memory_id]
+            if len(parents) != 1:
+                return False
+            current = parents[0]
+            if current.memory_id == ancestor_id:
+                return True
+        return False
+
     def _covered_by_resolution(self, local: MemoryRecord, fleet: MemoryRecord) -> bool:
         """True when a recorded resolution of this fleet branch precedes the local revision."""
         with self.db._lock:
@@ -157,7 +181,7 @@ class ConflictService:
         if local.content == fleet.content or local.memory_id == fleet.memory_id:
             return None
         if local_history is not None and fleet_history is not None:
-            if local.memory_id in {r.memory_id for r in fleet_history} or fleet.memory_id in {r.memory_id for r in local_history}:
+            if self._descends(local, fleet.memory_id, local_history) or self._descends(fleet, local.memory_id, fleet_history):
                 return None
         elif local.parent_revision != fleet.parent_revision:
             return None
@@ -216,9 +240,8 @@ class ConflictService:
 
     def open_count(self) -> int:
         with self.db._lock:
-            return self.db._connection.execute(
-                "SELECT COUNT(*) FROM conflicts WHERE status IN ('OPEN','RESOLVING')"
-            ).fetchone()[0]
+            pass
+        return len(self.list_open())
 
     def open_logical_ids(self) -> set[str]:
         return {conflict.logical_id for conflict in self.list_open()}
@@ -241,6 +264,8 @@ class ConflictService:
             conflict = self._record_from_row(row)
             if conflict is None:
                 raise KeyError(conflict_id)
+            if conflict.status == "STALE":
+                raise ConflictResolutionError("conflict already superseded by a newer local revision")
             if conflict.status != "OPEN" and conflict.resolution != resolution:
                 raise ConflictResolutionError("conflict already resolved with " + str(conflict.resolution))
             if conflict.status == "OPEN":
@@ -253,6 +278,10 @@ class ConflictService:
                              (claimed.model_dump_json(), conflict_id))
                 conflict = claimed
         if conflict.status == "RESOLVED":
+            if resolution == "MERGE" and merged_content is not None:
+                stored = memories.get(conflict.resolution_memory_id)
+                if stored is None or stored.content != merged_content:
+                    raise ConflictResolutionError("conflict already resolved with different merged content")
             return conflict
         if resolution == "KEEP_LOCAL":
             source = memories.get(conflict.local_memory_id)
@@ -263,7 +292,12 @@ class ConflictService:
         content = merged_content if resolution == "MERGE" else (source.content if source else None)
         if content is None:
             raise ConflictResolutionError("resolution source memory is unavailable")
-        await memories.write_resolution(conflict, content)
+        try:
+            await memories.write_resolution(conflict, content)
+        except StaleConflictError as exc:
+            with self.db.transaction() as conn:
+                conn.execute("UPDATE conflicts SET status='STALE' WHERE conflict_id=? AND status IN ('OPEN','RESOLVING')", (conflict_id,))
+            raise ConflictResolutionError("conflict already superseded by a newer local revision") from exc
         now = utcnow()
         with self.db.transaction() as conn:
             row = conn.execute("SELECT * FROM conflicts WHERE conflict_id=?", (conflict_id,)).fetchone()

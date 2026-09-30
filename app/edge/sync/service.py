@@ -124,7 +124,7 @@ class SyncService:
                     (memory_id,),
                 ).fetchone()
                 conflict = self.db._connection.execute(
-                    "SELECT 1 FROM conflicts WHERE logical_id=? AND status='OPEN' LIMIT 1",
+                    "SELECT 1 FROM conflicts WHERE logical_id=? AND status IN ('OPEN','RESOLVING') LIMIT 1",
                     (entry["logical_id"],),
                 ).fetchone()
             if (policy is None or outbox is None or conflict is not None
@@ -243,12 +243,14 @@ class SyncService:
             if self.snapshots is not None:
                 result = await self._refresh_and_confirm(uploaded, failed, skipped)
                 await self._blocking(self._scan_conflicts)
-                if retraction_error is None:
-                    retraction_error = await self._confirm_retractions()
+                if result.refresh_error is None:
+                    retraction_error = await self._confirm_retractions() or retraction_error
                 if retraction_error and result.refresh_error is None:
                     result = SyncRunResult("DEGRADED", result.uploaded, result.failed, result.skipped, result.pending,
                         result.synchronized, result.snapshot_pending, retraction_error)
                 return result
+            # Without a fleet snapshot service the wait=True server delete is the only confirmation.
+            retraction_error = await self._confirm_retractions(require_absent=False) or retraction_error
             if retraction_error:
                 failed += 1
             return SyncRunResult("COMPLETED" if failed == 0 else "DEGRADED", uploaded, failed, skipped, len(self.outbox.pending(self.batch_size)))
@@ -362,20 +364,30 @@ class SyncService:
         status = "DEGRADED" if failed or error else "SNAPSHOT_PENDING" if snapshot_pending else "COMPLETED"
         return SyncRunResult(status,uploaded,failed,skipped,pending,synchronized,snapshot_pending,error)
 
-    _UNSETTLED = (SyncState.NEW, SyncState.LOCAL_DIRTY, SyncState.LOCAL_ONLY, SyncState.AWAITING_APPROVAL,
-                  SyncState.QUEUED, SyncState.UPLOADING, SyncState.RETRY_WAIT)
+    _SCAN_STATES = (SyncState.NEW, SyncState.LOCAL_DIRTY, SyncState.LOCAL_ONLY, SyncState.AWAITING_APPROVAL,
+                    SyncState.QUEUED, SyncState.UPLOADING, SyncState.RETRY_WAIT, SyncState.UPLOADED,
+                    SyncState.SNAPSHOT_PENDING, SyncState.SYNCHRONIZED, SyncState.CONFLICTED)
+    _BLOCKABLE = ("QUEUED", "RETRY_WAIT", "UPLOADING")
+
+    def _own_memory_ids(self, logical_id: str) -> set[str]:
+        with self.db._lock:
+            rows = self.db._connection.execute("SELECT memory_id FROM memory_policy WHERE logical_id=?", (logical_id,)).fetchall()
+        return {row["memory_id"] for row in rows}
 
     def _scan_conflicts(self) -> int:
-        """Detect divergence from the local branch to fleet and block its upload.
+        """Detect divergence between the local head and fleet branch tips.
 
-        Only unsettled local heads are compared; each is checked against the
-        newest fleet revision using actual retained lineage.
+        Uses retained lineage only: this device's own committed revision IDs prove
+        a fleet copy is its ancestor even after local cleanup, and revision numbers
+        never choose a winner. Settled heads are scanned too, because another
+        branch can reach fleet after both uploads.
         """
         list_fleet = getattr(self.store, "list_fleet_points", None)
         if self.conflicts is None or list_fleet is None:
             return 0
+        local_records = self.memories._records()
         heads: dict[str, Any] = {}
-        for record in self.memories._records():
+        for record in local_records:
             if record.logical_id not in heads or heads[record.logical_id].revision < record.revision:
                 heads[record.logical_id] = record
         fleet_by_logical: dict[str, list[Any]] = {}
@@ -388,21 +400,26 @@ class SyncService:
         found = 0
         for logical_id, local in heads.items():
             fleet_records = fleet_by_logical.get(logical_id)
-            if not fleet_records or local.is_deleted or local.sync_state not in self._UNSETTLED:
+            if not fleet_records or local.is_deleted or local.sync_state not in self._SCAN_STATES:
                 continue
-            fleet = max(fleet_records, key=lambda record: (record.revision, record.memory_id))
-            conflict = self.conflicts.detect(local, fleet,
-                local_history=[r for r in self.memories._records() if r.logical_id == logical_id],
-                fleet_history=fleet_records)
-            if conflict is None or self.conflicts.get(conflict.conflict_id).status not in ("OPEN", "RESOLVING"):
-                continue
-            found += 1
-            for item in self.outbox.all():
-                if item.memory_id == local.memory_id and item.status in ("QUEUED", "RETRY_WAIT", "UPLOADING"):
-                    self.outbox.cancel(item.id, SyncState.CONFLICTED.value)
-            with self.db.transaction() as conn:
-                conn.execute("UPDATE memory_policy SET sync_state='CONFLICTED',updated_at=? WHERE memory_id=? AND sync_state NOT IN ('SUPERSEDED','SYNCHRONIZED')",
-                             (datetime.now(timezone.utc).isoformat(), local.memory_id))
+            own_ids = self._own_memory_ids(logical_id)
+            local_history = [r for r in local_records if r.logical_id == logical_id]
+            local_history += [r for r in fleet_records if r.memory_id in own_ids and r.memory_id not in {h.memory_id for h in local_history}]
+            tips = [r for r in fleet_records if not any(c.parent_revision == r.revision and c.revision > r.revision for c in fleet_records)]
+            for fleet in sorted(tips, key=lambda r: (r.revision, r.memory_id)):
+                if fleet.memory_id == local.memory_id:
+                    continue
+                conflict = self.conflicts.detect(local, fleet, local_history=local_history, fleet_history=fleet_records)
+                if conflict is None or self.conflicts.get(conflict.conflict_id).status not in ("OPEN", "RESOLVING"):
+                    continue
+                found += 1
+                for item in self.outbox.all():
+                    if item.memory_id == local.memory_id and item.status in self._BLOCKABLE:
+                        self.outbox.cancel(item.id, SyncState.CONFLICTED.value)
+                with self.db.transaction() as conn:
+                    conn.execute("UPDATE memory_policy SET sync_state='CONFLICTED',updated_at=? WHERE memory_id=? "
+                                 "AND sync_state NOT IN ('SUPERSEDED','UPLOADED','SNAPSHOT_PENDING')",
+                                 (datetime.now(timezone.utc).isoformat(), local.memory_id))
         return found
 
     def _pending_retractions(self) -> list[dict[str, Any]]:
@@ -441,13 +458,13 @@ class SyncService:
                 self._save_retraction(job, attempts=job["attempts"] + 1, last_error=error)
         return error
 
-    async def _confirm_retractions(self) -> str | None:
+    async def _confirm_retractions(self, require_absent: bool = True) -> str | None:
         """Complete a job only after a refreshed fleet no longer contains its targets."""
         error = None
         for job in self._pending_retractions():
             if job["status"] != "DELETED_REMOTE":
                 continue
-            if any(self.store.retrieve_fleet(memory_id) is not None for memory_id in job["target_ids"]):
+            if require_absent and any(self.store.retrieve_fleet(memory_id) is not None for memory_id in job["target_ids"]):
                 error = "RetractionNotConfirmed: fleet still contains retracted memory IDs"
                 self._save_retraction(job, status="QUEUED", last_error=error)
                 continue

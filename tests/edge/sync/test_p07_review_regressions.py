@@ -1,0 +1,128 @@
+"""Retained regressions from the fresh P04-P07 boundary review."""
+import asyncio
+import json
+from datetime import datetime, timezone
+
+import pytest
+
+from app.edge.conflicts.service import ConflictResolutionError, ConflictService
+from app.edge.memory.models import CreateMemory, MemoryType, ReviseMemory, SyncState
+from app.edge.memory.store import StoredPoint
+from test_sync_retractions import setup
+
+
+def fresh(tmp_path):
+    parts = setup(tmp_path)
+    store, db, activity, outbox, memories, remote, snapshots, sync = parts
+    sync.conflicts = ConflictService(db, activity)
+    return parts
+
+
+def other_branch(remote, local, memory_id, content):
+    record = local.model_copy(update={"memory_id": memory_id, "content": content, "content_hash": "h-" + memory_id, "device_id": "robot-2"})
+    remote.points[memory_id] = StoredPoint(memory_id, [1, 0, 0, 0], {"indices": [1], "values": [1.0]},
+                                           {"record_type": "memory", **record.model_dump(mode="json")})
+    return record
+
+
+def jobs(db):
+    return [json.loads(r["value"]) for r in db._connection.execute("SELECT value FROM sync_checkpoints WHERE checkpoint_id LIKE 'sync-retraction:%'")]
+
+
+def test_retraction_is_not_completed_when_fleet_refresh_failed(tmp_path):
+    store, db, activity, outbox, memories, remote, snapshots, sync = fresh(tmp_path)
+
+    async def run():
+        record = await memories.create(CreateMemory(content="fleet safe A", memory_type=MemoryType.LEARNED_FACT))
+        good_refresh = snapshots.refresh
+
+        async def offline():
+            raise ConnectionError("snapshot offline")
+
+        snapshots.refresh = offline
+        await sync.run_once()
+        await memories.tombstone(record.logical_id)
+        result = await sync.run_once()
+        assert result.refresh_error and [j["status"] for j in jobs(db)] != ["COMPLETED"]
+        snapshots.refresh = good_refresh
+        await sync.run_once()
+        assert [j["status"] for j in jobs(db)] == ["COMPLETED"] and record.memory_id not in store.fleet
+
+    asyncio.run(run())
+
+
+def test_resolution_after_local_branch_moved_on_is_rejected_without_stray_point(tmp_path):
+    store, db, activity, outbox, memories, remote, snapshots, sync = fresh(tmp_path)
+
+    async def run():
+        record = await memories.create(CreateMemory(content="fleet safe proc v1", memory_type=MemoryType.LEARNED_FACT))
+        await sync.run_once()
+        local2 = await memories.revise(record.logical_id, ReviseMemory(content="local v2", parent_revision=1))
+        other_branch(remote, local2, "00000000-0000-0000-0000-0000000000f2", "fleet v2")
+        await snapshots.refresh()
+        await sync.run_once()
+        conflict = sync.conflicts.list_open()[0]
+        await memories.revise(record.logical_id, ReviseMemory(content="local v3", parent_revision=2))
+        before = {p.id for p in store.list_points()}
+        with pytest.raises(ConflictResolutionError):
+            await sync.conflicts.resolve(conflict.conflict_id, "KEEP_LOCAL", memories)
+        assert {p.id for p in store.list_points()} == before
+        assert sync.conflicts.open_count() == 0
+        await memories.reconcile()  # restart reconciliation still succeeds
+
+    asyncio.run(run())
+
+
+def test_revision_is_not_conflicted_with_its_own_cleaned_parent(tmp_path):
+    store, db, activity, outbox, memories, remote, snapshots, sync = fresh(tmp_path)
+    store.delete_local = lambda memory_id: store.points.pop(memory_id, None)
+
+    async def run():
+        record = await memories.create(CreateMemory(content="fleet safe proc v1", memory_type=MemoryType.LEARNED_FACT))
+        await sync.run_once()
+        cutoff = datetime.now(timezone.utc).timestamp() + 1
+        assert sync.cleanup_confirmed_local(cutoff) == 1
+        local2 = await memories.revise(record.logical_id, ReviseMemory(content="fleet safe proc v2", parent_revision=1))
+        sync.cleanup_confirmed_local(cutoff)
+        result = await sync.run_once()
+        assert result.uploaded == 1 and sync.conflicts.list_open() == []
+        assert local2.memory_id in remote.points
+
+    asyncio.run(run())
+
+
+def test_divergence_is_detected_after_both_branches_uploaded(tmp_path):
+    store, db, activity, outbox, memories, remote, snapshots, sync = fresh(tmp_path)
+
+    async def run():
+        record = await memories.create(CreateMemory(content="fleet safe proc v1", memory_type=MemoryType.LEARNED_FACT))
+        await sync.run_once()
+        local2 = await memories.revise(record.logical_id, ReviseMemory(content="local v2", parent_revision=1))
+        other_branch(remote, local2, "00000000-0000-0000-0000-0000000000f3", "other v2")
+        await sync.run_once()
+        await sync.run_once()
+        assert local2.memory_id in store.fleet and "00000000-0000-0000-0000-0000000000f3" in store.fleet
+        open_conflicts = sync.conflicts.list_open()
+        assert len(open_conflicts) == 1 and open_conflicts[0].local_memory_id == local2.memory_id
+        assert memories.get(local2.memory_id).sync_state is SyncState.CONFLICTED
+
+    asyncio.run(run())
+
+
+def test_merge_retry_with_different_content_is_rejected(tmp_path):
+    store, db, activity, outbox, memories, remote, snapshots, sync = fresh(tmp_path)
+
+    async def run():
+        record = await memories.create(CreateMemory(content="fleet safe proc v1", memory_type=MemoryType.LEARNED_FACT))
+        await sync.run_once()
+        local2 = await memories.revise(record.logical_id, ReviseMemory(content="local v2", parent_revision=1))
+        other_branch(remote, local2, "00000000-0000-0000-0000-0000000000f4", "other v2")
+        await snapshots.refresh()
+        await sync.run_once()
+        conflict = sync.conflicts.list_open()[0]
+        first = await sync.conflicts.resolve(conflict.conflict_id, "MERGE", memories, "merged one")
+        with pytest.raises(ConflictResolutionError):
+            await sync.conflicts.resolve(conflict.conflict_id, "MERGE", memories, "merged two")
+        assert memories.get(first.resolution_memory_id).content == "merged one"
+
+    asyncio.run(run())
