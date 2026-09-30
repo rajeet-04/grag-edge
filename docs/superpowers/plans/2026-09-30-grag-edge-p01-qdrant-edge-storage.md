@@ -14,6 +14,7 @@
 - Qdrant Edge runs in-process inside FastAPI.
 - Pin the resolved `qdrant-edge-py` version in `uv.lock` after smoke verification.
 - Shard data persists under configurable local directories.
+- Dense vector dimension is explicitly configured as `EDGE_EMBEDDING_DIMENSION=768` for the default `nomic-embed-text` model; changing the model/dimension requires a shard migration.
 - Cloud availability is irrelevant to this phase.
 - Exit gate: local points survive process/store reopen through the application adapter.
 
@@ -40,7 +41,7 @@
 **Interfaces:**
 - Produce: `StoredPoint(id: str, dense: list[float], sparse: Any | None, payload: dict[str, Any])`.
 - Produce protocol: `EdgeMemoryStore.upsert(point: StoredPoint) -> None`, `retrieve(point_id: str) -> StoredPoint | None`, `close() -> None`.
-- Produce settings: `qdrant_edge_path: Path`, `embedding_dimension: int`.
+- Produce settings: `qdrant_edge_path: Path`, `embedding_dimension: int` with environment alias `EDGE_EMBEDDING_DIMENSION` and default `768`.
 
 - [ ] **Step 1: Write contract tests**
   Tests assert protocol implementations can upsert/retrieve a payload and reject a dense vector whose length differs from `embedding_dimension`.
