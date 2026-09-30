@@ -26,3 +26,10 @@ Executed against the isolated Docker Engine 29.8.1 (`overlay2`), cached Qdrant 1
 - During runtime validation, an explicitly empty Qdrant API-key setting caused an authentication error; omitting the empty key corrected the configuration and restored ONLINE status.
 
 P05 is complete at the `UPLOADED` boundary. Synchronization completion and snapshot semantics remain for P06.
+
+## Review corrections
+
+The P05 review reproduced three upload lifecycle defects and one shutdown race. Regression tests first failed because a SQL policy change after point materialization attempted to cancel an active claim, successful uploads had no `sync_attempts` row, and runtime shutdown returned while a blocking cloud health probe was still running. The fix makes claim/state/attempt creation and terminal/retry policy updates atomic in SQLite; pre-send denial can cancel the worker's claim; materialization and eligibility exceptions become recorded retries; interrupted attempts are recorded and numbered before restart retry. The final outbound `StoredPoint` is a copy projected with effective SQLite policy and accepted `UPLOADED` state. Blocking cloud calls are shielded and awaited after coroutine cancellation, so owned store/database/client resources remain open until the bounded call finishes.
+
+- Retained regression coverage: policy change during materialization cancels without sending, preparation failure records retry, success records an attempt, claim SQL failure rolls back both rows, and close waits for an in-flight connectivity probe.
+- Post-review verification: `UV_CACHE_DIR=/private/tmp/grag-edge-uv-cache uv run pytest tests/edge -q` completed with **83 passed, 1 skipped**. `PATH=/private/tmp/grag-edge-runtime/bin:$PATH DOCKER_HOST=tcp://127.0.0.1:23750 UV_CACHE_DIR=/private/tmp/grag-edge-uv-cache make baseline-check` exited 0: **283 passed, 2 skipped, and exactly 10 recorded imported failures**; the baseline validator reported no regression.

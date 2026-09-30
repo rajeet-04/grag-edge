@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.edge.memory.models import Sensitivity, SyncPolicy, SyncState
+from app.edge.memory.store import StoredPoint
 from app.edge.state.activity import ActivityEvent, ActivityLog
 from app.edge.state.sqlite import EdgeStateDB
 from app.edge.sync.outbox import OutboxItem, SyncOutbox
@@ -29,12 +30,17 @@ class SyncService:
         self.device_id, self.embedding_dimension, self.batch_size = device_id, embedding_dimension, batch_size
         self._run_lock = asyncio.Lock()
 
+    @staticmethod
+    async def _blocking(function, *args):
+        job = asyncio.create_task(asyncio.to_thread(function, *args))
+        try:
+            return await asyncio.shield(job)
+        except asyncio.CancelledError:
+            await job
+            raise
+
     def recover_interrupted(self) -> int:
         return self.outbox.recover_interrupted()
-
-    def _set_state(self, memory_id: str, state: SyncState) -> None:
-        with self.db.transaction() as conn:
-            conn.execute("UPDATE memory_policy SET sync_state=?,updated_at=? WHERE memory_id=?", (state.value, datetime.now(timezone.utc).isoformat(), memory_id))
 
     def _event(self, kind: str, message: str, memory_id: str | None = None, metadata: dict | None = None) -> None:
         self.activity.append(ActivityEvent(event_type=kind, device_id=self.device_id, memory_id=memory_id,
@@ -63,9 +69,8 @@ class SyncService:
         return record, None
 
     def _cancel(self, item: OutboxItem, reason: str) -> None:
-        self.outbox.cancel(item.id)
         state = SyncState.SUPERSEDED if reason == "superseded_revision" else SyncState.LOCAL_ONLY
-        self._set_state(item.memory_id, state)
+        self.outbox.cancel(item.id, state.value)
 
     async def run_once(self) -> SyncRunResult:
         if self._run_lock.locked():
@@ -74,46 +79,63 @@ class SyncService:
             items = self.outbox.claimable(self.batch_size)
             if not items:
                 return SyncRunResult("IDLE", pending=len(self.outbox.pending(self.batch_size)))
-            health = await asyncio.to_thread(self.remote.health) if hasattr(self.remote, "health") else CloudHealth.ONLINE
+            health = await self._blocking(self.remote.health) if hasattr(self.remote, "health") else CloudHealth.ONLINE
             if health is not CloudHealth.ONLINE and str(health) != CloudHealth.ONLINE.value:
                 return SyncRunResult(str(health), pending=len(self.outbox.pending(self.batch_size)))
             self._event("SYNC_STARTED", "Queued memories are being synchronized", metadata={"count": len(items)})
             try:
-                await asyncio.to_thread(self.remote.ensure_collection, self.embedding_dimension)
+                await self._blocking(self.remote.ensure_collection, self.embedding_dimension)
             except Exception as exc:
                 return await self._fail_batch(items, exc)
 
             uploaded = failed = skipped = 0
             for item in items:
-                record, reason = self._eligible(item)
+                try:
+                    record, reason = self._eligible(item)
+                except Exception as exc:
+                    self.outbox.mark_uploading(item.id)
+                    error = f"{type(exc).__name__}: {exc}"
+                    retry = self.outbox.mark_retry(item.id, error)
+                    self._event("SYNC_RETRY", "Eligibility check failed; retry scheduled", item.memory_id,
+                        {"attempt": retry.retry_count, "error": error, "next_attempt_at": retry.next_attempt_at.isoformat() if retry.next_attempt_at else None})
+                    failed += 1
+                    continue
                 if reason:
                     self._cancel(item, reason)
                     skipped += 1
                     continue
                 self.outbox.mark_uploading(item.id)
-                self._set_state(item.memory_id, SyncState.UPLOADING)
                 # Recheck persisted policy, privacy, and latest revision immediately before
                 # reading the point that will cross the network boundary.
-                record, reason = self._eligible(item, allow_uploading=True)
-                point = self.store.retrieve(item.memory_id) if reason is None else None
-                # Recheck after local materialization so an intervening privacy/revision
-                # change cannot race the outbound call.
-                if reason is None:
+                try:
                     record, reason = self._eligible(item, allow_uploading=True)
+                    point = self.store.retrieve(item.memory_id) if reason is None else None
+                    # Recheck after local materialization so an intervening privacy/revision
+                    # change cannot race the outbound call.
+                    if reason is None:
+                        record, reason = self._eligible(item, allow_uploading=True)
+                except Exception as exc:
+                    error = f"{type(exc).__name__}: {exc}"
+                    retry = self.outbox.mark_retry(item.id, error)
+                    self._event("SYNC_RETRY", "Local upload preparation failed; retry scheduled", item.memory_id,
+                        {"attempt": retry.retry_count, "error": error, "next_attempt_at": retry.next_attempt_at.isoformat() if retry.next_attempt_at else None})
+                    failed += 1
+                    continue
                 if reason or point is None:
-                    self.outbox.cancel(item.id)
                     state = SyncState.SUPERSEDED if reason == "superseded_revision" else SyncState.LOCAL_ONLY
-                    self._set_state(item.memory_id, state)
+                    self.outbox.cancel(item.id, state.value)
                     skipped += 1
                     continue
+                # Project the effective SQLite policy over the original local
+                # payload before it crosses the network boundary.
+                payload = {**point.payload, **record.model_dump(mode="json"), "sync_state": SyncState.UPLOADED.value}
+                point = StoredPoint(point.id, point.dense, point.sparse, payload)
                 try:
-                    await asyncio.to_thread(self.remote.upsert_point, point)
+                    await self._blocking(self.remote.upsert_point, point)
                     self.outbox.mark_uploaded(item.id)
-                    self._set_state(item.memory_id, SyncState.UPLOADED)
                     uploaded += 1
                 except Exception as exc:
                     self.outbox.mark_retry(item.id, f"{type(exc).__name__}: {exc}")
-                    self._set_state(item.memory_id, SyncState.RETRY_WAIT)
                     retry = next(outbox for outbox in self.outbox.all() if outbox.id == item.id)
                     self._event("SYNC_RETRY", "Remote upload failed; retry scheduled", item.memory_id,
                         {"attempt": retry.retry_count, "error": retry.last_error, "next_attempt_at": retry.next_attempt_at.isoformat() if retry.next_attempt_at else None})
@@ -128,9 +150,7 @@ class SyncService:
                 self._cancel(item, reason)
                 continue
             self.outbox.mark_uploading(item.id)
-            self._set_state(item.memory_id, SyncState.UPLOADING)
             self.outbox.mark_retry(item.id, f"{type(exc).__name__}: {exc}")
-            self._set_state(item.memory_id, SyncState.RETRY_WAIT)
             self._event("SYNC_RETRY", "Remote collection setup failed; retry scheduled", item.memory_id,
                 {"error": str(exc)})
             failed += 1

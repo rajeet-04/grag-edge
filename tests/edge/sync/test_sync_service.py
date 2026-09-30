@@ -57,9 +57,57 @@ def test_upload_marks_revision_uploaded_and_preserves_deterministic_point(setup)
         result = await service.run_once()
         assert result.uploaded == 1 and result.failed == 0
         assert [point.id for point in remote.uploaded] == [record.memory_id]
+        assert remote.uploaded[0].payload["sync_policy"] == "auto"
+        assert remote.uploaded[0].payload["sync_state"] == "UPLOADED"
         assert next(item for item in outbox.all() if item.memory_id == record.memory_id).status == "UPLOADED"
         assert memories.get(record.memory_id).sync_state is SyncState.UPLOADED
+        uploaded_item = next(item for item in outbox.all() if item.memory_id == record.memory_id)
+        attempts = outbox.attempts(uploaded_item.id)
+        assert len(attempts) == 1 and attempts[0]["error"] is None
         assert [e.event_type for e in activity.list(20)].count("SYNC_STARTED") == 1
+    asyncio.run(run())
+
+
+def test_policy_change_during_materialization_cancels_claimed_upload(setup):
+    async def run():
+        store, db, outbox, remote, service, record = (setup[k] for k in ("store", "db", "outbox", "remote", "service", "record"))
+        original_retrieve = store.retrieve
+        calls = 0
+        def retrieve(memory_id):
+            nonlocal calls
+            calls += 1
+            point = original_retrieve(memory_id)
+            if calls == 3:
+                with db.transaction() as conn:
+                    conn.execute("UPDATE memory_policy SET sensitivity='restricted' WHERE memory_id=?", (memory_id,))
+            return point
+        store.retrieve = retrieve
+        result = await service.run_once()
+        item = next(item for item in outbox.all() if item.memory_id == record.memory_id)
+        assert result.skipped == 1 and remote.uploaded == []
+        assert item.status == "CANCELLED"
+        assert setup["memories"].get(record.memory_id).sync_state is SyncState.LOCAL_ONLY
+    asyncio.run(run())
+
+
+def test_materialization_error_records_failed_attempt_and_releases_claim(setup):
+    async def run():
+        store, outbox, remote, service, record = (setup[k] for k in ("store", "outbox", "remote", "service", "record"))
+        original_retrieve = store.retrieve
+        calls = 0
+        def retrieve(memory_id):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                raise RuntimeError("materialization failed")
+            return original_retrieve(memory_id)
+        store.retrieve = retrieve
+        result = await service.run_once()
+        item = next(item for item in outbox.all() if item.memory_id == record.memory_id)
+        attempts = outbox.attempts(item.id)
+        assert result.failed == 1 and item.status == "RETRY_WAIT"
+        assert len(attempts) == 1 and attempts[0]["error"] == "RuntimeError: materialization failed"
+        assert remote.uploaded == []
     asyncio.run(run())
 
 

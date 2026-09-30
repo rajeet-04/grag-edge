@@ -119,7 +119,14 @@ class SyncOutbox:
         with self.db.transaction() as conn:
             row = self._select(conn, outbox_id)
             if row["status"] in ("QUEUED", "RETRY_WAIT"):
-                conn.execute("UPDATE sync_outbox SET status='UPLOADING', updated_at=? WHERE id=?", (_now(), outbox_id))
+                now = _now()
+                attempt = row["retry_count"] + 1
+                conn.execute("UPDATE sync_outbox SET status='UPLOADING', updated_at=? WHERE id=?", (now, outbox_id))
+                conn.execute("UPDATE memory_policy SET sync_state='UPLOADING',updated_at=? WHERE memory_id=?", (now, row["memory_id"]))
+                conn.execute(
+                    "INSERT INTO sync_attempts(id,outbox_id,attempt_number,error,created_at) VALUES(?,?,?,NULL,?)",
+                    (str(uuid4()), outbox_id, attempt, now),
+                )
             elif row["status"] != "UPLOADING":
                 raise ValueError(f"cannot start upload from {row['status']}")
             return self._item(self._select(conn, outbox_id))
@@ -137,10 +144,8 @@ class SyncOutbox:
                 "UPDATE sync_outbox SET status='RETRY_WAIT', retry_count=?, last_error=?, next_attempt_at=?, updated_at=? WHERE id=?",
                 (attempt, error, next_attempt, now, outbox_id),
             )
-            conn.execute(
-                "INSERT INTO sync_attempts(id,outbox_id,attempt_number,error,created_at) VALUES(?,?,?,?,?)",
-                (str(uuid4()), outbox_id, attempt, error, now),
-            )
+            conn.execute("UPDATE memory_policy SET sync_state='RETRY_WAIT',updated_at=? WHERE memory_id=?", (now, row["memory_id"]))
+            conn.execute("UPDATE sync_attempts SET error=? WHERE outbox_id=? AND attempt_number=?", (error, outbox_id, attempt))
             return self._item(self._select(conn, outbox_id))
 
     def mark_uploaded(self, outbox_id: str) -> OutboxItem:
@@ -150,25 +155,30 @@ class SyncOutbox:
                 return self._item(row)
             if row["status"] != "UPLOADING":
                 raise ValueError(f"cannot mark uploaded from {row['status']}")
-            conn.execute("UPDATE sync_outbox SET status='UPLOADED', next_attempt_at=NULL, updated_at=? WHERE id=?", (_now(), outbox_id))
+            now = _now()
+            conn.execute("UPDATE sync_outbox SET status='UPLOADED', next_attempt_at=NULL, updated_at=? WHERE id=?", (now, outbox_id))
+            conn.execute("UPDATE memory_policy SET sync_state='UPLOADED',updated_at=? WHERE memory_id=?", (now, row["memory_id"]))
             return self._item(self._select(conn, outbox_id))
 
-    def cancel(self, outbox_id: str) -> OutboxItem:
+    def cancel(self, outbox_id: str, sync_state: str = "LOCAL_ONLY") -> OutboxItem:
         with self.db.transaction() as conn:
             row = self._select(conn, outbox_id)
             if row["status"] in ("UPLOADED", "CANCELLED"):
                 return self._item(row)
-            if row["status"] == "UPLOADING":
-                raise ValueError("cannot cancel an active upload")
-            conn.execute("UPDATE sync_outbox SET status='CANCELLED',next_attempt_at=NULL,updated_at=? WHERE id=?", (_now(), outbox_id))
+            now = _now()
+            conn.execute("UPDATE sync_outbox SET status='CANCELLED',next_attempt_at=NULL,updated_at=? WHERE id=?", (now, outbox_id))
+            conn.execute("UPDATE memory_policy SET sync_state=?,updated_at=? WHERE memory_id=?", (sync_state, now, row["memory_id"]))
             return self._item(self._select(conn, outbox_id))
 
     def recover_interrupted(self) -> int:
         now = _now()
         with self.db.transaction() as conn:
-            rows = conn.execute("SELECT memory_id FROM sync_outbox WHERE status='UPLOADING'").fetchall()
-            conn.execute("UPDATE sync_outbox SET status='QUEUED',last_error='recovered interrupted upload',next_attempt_at=NULL,updated_at=? WHERE status='UPLOADING'", (now,))
+            rows = conn.execute("SELECT id,memory_id,retry_count FROM sync_outbox WHERE status='UPLOADING'").fetchall()
             for row in rows:
+                error = "interrupted upload recovered"
+                attempt = row["retry_count"] + 1
+                conn.execute("UPDATE sync_outbox SET status='QUEUED',retry_count=?,last_error=?,next_attempt_at=NULL,updated_at=? WHERE id=?", (attempt, error, now, row["id"]))
+                conn.execute("UPDATE sync_attempts SET error=? WHERE outbox_id=? AND attempt_number=?", (error, row["id"], attempt))
                 conn.execute("UPDATE memory_policy SET sync_state='QUEUED',updated_at=? WHERE memory_id=?", (now, row["memory_id"]))
             conn.execute("UPDATE memory_policy SET sync_state='UPLOADED',updated_at=? WHERE memory_id IN (SELECT memory_id FROM sync_outbox WHERE status='UPLOADED') AND sync_state!='UPLOADED'", (now,))
         return len(rows)

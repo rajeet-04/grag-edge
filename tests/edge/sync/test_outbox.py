@@ -47,3 +47,18 @@ def test_retry_count_and_pending_work_survive_restart(tmp_path: Path):
     assert pending[0].retry_count == 1 and pending[0].status == "RETRY_WAIT"
     assert len(outbox.attempts(item.id)) == 1
     reopened.close()
+
+
+def test_upload_claim_and_policy_state_roll_back_atomically(tmp_path: Path):
+    db = EdgeStateDB(tmp_path / "state.db")
+    outbox = SyncOutbox(db)
+    item = outbox.enqueue("memory-3", "logical-3", 1)
+    with db.transaction() as conn:
+        conn.execute("INSERT INTO memory_policy(memory_id,logical_id,revision,requested_sync_policy,sensitivity,sync_policy,sync_state,reason_codes_json,is_deleted,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (item.memory_id, item.logical_id, 1, "auto", "normal", "auto", "QUEUED", "[]", 0, "2026-01-01T00:00:00+00:00"))
+        conn.execute("CREATE TRIGGER reject_uploading BEFORE UPDATE OF sync_state ON memory_policy WHEN NEW.sync_state='UPLOADING' BEGIN SELECT RAISE(ABORT,'injected policy write failure'); END")
+    with pytest.raises(Exception, match="injected policy write failure"):
+        outbox.mark_uploading(item.id)
+    assert outbox.get(item.id).status == "QUEUED"
+    assert outbox.attempts(item.id) == []
+    db.close()

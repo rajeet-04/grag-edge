@@ -66,11 +66,22 @@ class EdgeRuntime:
     async def _connectivity_loop(self):
         while True:
             try:
-                await asyncio.to_thread(self.connectivity.run_once)
+                await self._blocking(self.connectivity.run_once)
             except Exception:
                 # Cloud status cannot take down the edge API; the next poll retries.
                 pass
             await asyncio.sleep(self.connectivity_interval_seconds)
+
+    @staticmethod
+    async def _blocking(function, *args):
+        job = asyncio.create_task(asyncio.to_thread(function, *args))
+        try:
+            return await asyncio.shield(job)
+        except asyncio.CancelledError:
+            # Cancelling an asyncio wrapper does not stop its worker thread. Keep
+            # the runtime resources alive until the bounded I/O call has finished.
+            await job
+            raise
 
     async def _sync_loop(self):
         while True:
