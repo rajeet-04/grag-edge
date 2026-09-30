@@ -20,8 +20,9 @@ P00 is complete at `45fae76`; its regression gate accepts full green or exactly 
 - P03: PASS (`0cc767c..26166e3`); root native edge gate 33/33; root baseline-check exit 0 (233 passed, 1 skipped, exact 10 imported failures). Independent boundary A re-review at 26166e3 passed all five Important fixes, native 768-dimensional persistence and fleet immutability.
 - P04: PASS (`89cd809..8366e95`); native recovery fix independently reviewed PASS. Root isolated fix gate 58 edge tests, baseline-check exit 0 (258 passed, 1 skipped, exact 10 imported failures).
 - P05: PASS (`f4ddc65..6b169e8`, evidence020d997); realDockeroffline/reconnect verified; atomic worker/privacy/shutdown/attempt-history fixes independently reviewed PASS. Root actual current edge93passed1skip; baselineexit0(293passed2skip exact10).
-- P06: IN PROGRESS.
-- P07–P12: NOT STARTED.
+- P06: PASS (`181209b..231a1d6`, interleaved prerequisite fixes); root actual sync gate42/42 including live Docker/native full+partial tests; baseline306passed1skip exact10 exit0. Actual API synchronized acknowledged memory and preserved one completion across restart.
+- P07: IN PROGRESS — implementation and gates complete at `d0723e0`; awaiting re-review verdict (see p07-execution.md).
+- P08–P12: NOT STARTED.
 
 ## Rulings
 
@@ -68,3 +69,11 @@ Ruling: legacy attempt rows lack sufficient historical timing/outcome evidence �
 P06 recovery fixaa8efbf rejects incomplete publication metadata and retains first-publication recovery pointer; native recovery tests observedREDthenGREEN.
 
 P05 final scoped clearance6b169e8: native old-bf08 migration retains genuine created_at/error, start/end NULL and LEGACY_UNKNOWN without queue resets. New FAILED→SUCCESS/CANCELLED/INTERRUPTED records persist real timings/outcomes across reopen. All reviewed Important/Critical resolved; P06 Task3 hold released.
+
+Ruling: real Qdrant1.17.1 may return HTTP304 with no body for unchanged native manifest → treat as harmless UNCHANGED and retain generation/checkpoint/completion identity, do not apply an empty archive → spec requires no-change refresh idempotence → risk: stale unobserved remote mutation; exactmanifest server semantics/live changed+unchanged tests verify boundary.
+
+User steering: gitignoredworktree.env now selects localgemma4:12b-mlx and optionalcloudnemotron-3-nano:30b-cloud. MacOllama0.35 supportsMLX, exacttagsverified, authorizedlocalmodeldownloads inprogress; DockerAPIhostroute verified. Requiredofflinepathsremainlocal. RemainingphaseagentsLuna peruserrequest.
+
+User stop scope: complete current P07, run its hard gate and required boundaryBreview, then stop. Do not start P08 or later phases. Authorized Ollama model pull remains running independently.
+
+Ruling: local-only/restricted tombstone must not upload blocked content or vectors, but explicit deletion must withdraw previously shared revisions → queue durable ID-only retractions for same-logical revisions with acknowledged or possibly accepted upload attempts, use idempotent server point deletes, refresh fleet and confirm absence before completion; archive own history locally → deletion tombstone semantics and privacy are both preserved → risk if wrong: operator intended local-only to prohibit withdrawal of previously shared content; retaining deleted data remotely would violate deletion/privacy intent.

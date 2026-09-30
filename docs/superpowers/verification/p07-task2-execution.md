@@ -14,9 +14,9 @@ Command:
 UV_CACHE_DIR=/private/tmp/grag-edge-uv-cache uv run --group dev pytest -q tests/edge/conflicts/test_conflict_detection.py
 ```
 
-Initial result: **7 passed**. The identity-contract follow-up first failed because JSON had replaced the fleet reference column value. After the schema correction and legacy migration test, final result: **8 passed**.
+Initial result: **7 passed**. The identity-contract follow-up first failed because JSON had replaced the fleet reference column value. After the schema correction and legacy migration test, result was **8 passed**. A retained RED/GREEN case for same-logical, same-revision sensitive root divergence (both `parent_revision=None`) brings the current detector suite to **9 passed**.
 
-Coverage includes procedure and learned-fact divergence, append-only observations/incidents, equal content, different logical identities and bases, metadata persistence without content, exactly-once activity emission, restart recovery, and 24 concurrent duplicate detector calls.
+Coverage includes procedure and learned-fact divergence, sensitive root divergence, append-only observations/incidents, equal content, different logical identities and bases, metadata persistence without content, exactly-once activity emission, restart recovery, and 24 concurrent duplicate detector calls.
 
 ## Interface and persistence
 
