@@ -111,6 +111,8 @@ from app.edge.api.sync import router as edge_sync_router
 app.include_router(edge_sync_router, prefix="/api/v1")
 from app.edge.api.operations import router as edge_operations_router
 app.include_router(edge_operations_router, prefix="/api/v1")
+from app.edge.api.conflicts import router as edge_conflicts_router
+app.include_router(edge_conflicts_router, prefix="/api/v1")
 
 
 @app.get("/health", response_model=HealthStatus)

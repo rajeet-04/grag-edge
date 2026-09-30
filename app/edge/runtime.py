@@ -2,6 +2,7 @@
 import asyncio
 from pathlib import Path
 
+from app.edge.conflicts import ConflictService
 from app.edge.memory.hybrid_search import HybridSearchService
 from app.edge.memory.qdrant_store import QdrantEdgeStore
 from app.edge.memory.service import MemoryService
@@ -37,8 +38,9 @@ class EdgeRuntime:
         self.connectivity = ConnectivityMonitor(self.cloud, self.state_db, self.activity, self.device_id)
         self.snapshots = FleetSnapshotService(store,self.state_db,self.activity,self.device_id,
             settings.qdrant_url,settings.qdrant_collection,settings.qdrant_api_key) if hasattr(store,"fleet_snapshot_base") else None
+        self.conflicts = ConflictService(self.state_db, self.activity)
         self.sync = SyncService(store, self.memories, self.outbox, self.state_db, self.activity, self.cloud,
-            self.device_id, settings.embedding_dimension, snapshots=self.snapshots)
+            self.device_id, settings.embedding_dimension, snapshots=self.snapshots, conflicts=self.conflicts)
         self._background: set[asyncio.Task] = set()
         self._manual_runs: set[asyncio.Task] = set()
 
@@ -51,6 +53,9 @@ class EdgeRuntime:
         self.sync.outbox = self.outbox
         self.sync.db = self.state_db
         self.sync.activity = self.activity
+        self.sync.conflicts = self.conflicts
+        self.conflicts.db = self.state_db
+        self.conflicts.activity = self.activity
         self.connectivity.db = self.state_db
         self.connectivity.activity = self.activity
         self.sync.recover_interrupted()

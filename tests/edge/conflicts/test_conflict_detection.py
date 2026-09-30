@@ -195,3 +195,22 @@ def test_existing_conflicts_table_migration_preserves_reference_columns(tmp_path
     assert row["fleet_memory_id"] == "fleet-uuid"
     assert row["metadata_json"] == "{}"
     db.close()
+
+
+def test_lineage_evidence_not_revision_number_decides_differing_parent_divergence(tmp_path):
+    db, conflicts = service(tmp_path)
+    base = memory(memory_id="base", content="base", revision=1, parent_revision=None, sync_state=SyncState.SYNCHRONIZED)
+    local = memory(memory_id="local-2", content="local edit", revision=2, parent_revision=1)
+    fleet2 = memory(memory_id="fleet-2", content="fleet edit", revision=2, parent_revision=1, device_id="robot-2")
+    fleet3 = memory(memory_id="fleet-3", content="fleet edit again", revision=3, parent_revision=2, device_id="robot-2")
+    assert conflicts.detect(local, fleet3) is None  # no lineage evidence: never assume higher revision wins
+    found = conflicts.detect(local, fleet3, local_history=[base, local], fleet_history=[base, fleet2, fleet3])
+    assert found is not None and found.local_revision == 2 and found.fleet_revision == 3
+
+
+def test_ancestor_relationship_is_not_a_conflict(tmp_path):
+    db, conflicts = service(tmp_path)
+    base = memory(memory_id="base", content="base", revision=1, parent_revision=None)
+    local = memory(memory_id="local-2", content="edit", revision=2, parent_revision=1)
+    fleet3 = memory(memory_id="fleet-3", content="later edit", revision=3, parent_revision=2, device_id="robot-2")
+    assert conflicts.detect(local, fleet3, local_history=[base, local], fleet_history=[base, local, fleet3]) is None

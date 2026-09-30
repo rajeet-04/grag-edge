@@ -164,3 +164,49 @@ def test_live_upload_partial_confirmation_and_durable_restart(tmp_path):
         assert len([e for e in activity.list(100) if e.event_type=="SYNC_COMPLETED"])==1
     finally:
         store.close(); db.close(); cloud.request("DELETE",base)
+
+
+@pytest.mark.skipif(not os.getenv("QDRANT_LIVE_DOCKER_CONTAINER"), reason="requires opt-in cloud network helper")
+def test_live_deletion_retracts_remote_point_and_confirms_fleet_absence(tmp_path):
+    from app.edge.memory.models import CreateMemory
+    from app.edge.memory.service import MemoryService
+    from app.edge.sync.outbox import SyncOutbox
+    from app.edge.sync.service import SyncService
+    from app.edge.sync.server_client import CloudHealth, RemoteAck
+    cloud=DockerCloud(os.environ["QDRANT_LIVE_DOCKER_CONTAINER"])
+    collection="p07_retraction_"+uuid4().hex; base="/collections/"+collection
+    cloud.request("PUT",base,{"shard_number":1,"vectors":{"dense":{"size":768,"distance":"Cosine"}},"sparse_vectors":{"text":{"modifier":"idf"}}})
+    def remote_ids():
+        found=json.loads(cloud.request("POST",base+"/points/scroll",{"limit":100,"with_payload":False}))
+        return {str(p["id"]) for p in found["result"]["points"]}
+    class Remote:
+        def health(self): return CloudHealth.ONLINE
+        def ensure_collection(self,_): pass
+        def upsert_point(self,point):
+            json.loads(cloud.request("PUT",base+"/points?wait=true",{"points":[{"id":point.id,"vector":{"dense":point.dense,"text":point.sparse},"payload":point.payload}]}))
+            return RemoteAck(point.id,"completed")
+        def delete_points(self,ids):
+            cloud.request("POST",base+"/points/delete?wait=true",{"points":list(ids)})
+    class Embeddings:
+        async def embed_with_context(self,*_): return [1.0]+[0.0]*767
+    store=QdrantEdgeStore(tmp_path/"local",tmp_path/"fleet",768); store.open()
+    db=EdgeStateDB(tmp_path/"state.db"); activity=ActivityLog(db); outbox=SyncOutbox(db)
+    memories=MemoryService(store,Embeddings(),db)
+    snapshots=FleetSnapshotService(store,db,activity,"robot","http://cloud",collection,client=httpx.AsyncClient(transport=DockerTransport(cloud)))
+    sync=SyncService(store,memories,outbox,db,activity,Remote(),"robot",embedding_dimension=768,snapshots=snapshots)
+    async def run():
+        await snapshots.bootstrap_if_missing()
+        record=await memories.create(CreateMemory(content="live retractable maintenance fact",memory_type=MemoryType.LEARNED_FACT))
+        assert (await sync.run_once()).synchronized==1
+        assert remote_ids()=={record.memory_id} and store.retrieve_fleet(record.memory_id) is not None
+        deleted=await memories.tombstone(record.logical_id)
+        await sync.run_once()
+        assert remote_ids()==set() and store.retrieve_fleet(record.memory_id) is None
+        assert deleted.memory_id not in remote_ids()
+        assert [r.memory_id for r in memories.history(record.logical_id)]==[record.memory_id,deleted.memory_id]
+        assert all(job["status"]=="COMPLETED" for job in [json.loads(r["value"]) for r in db._connection.execute("SELECT value FROM sync_checkpoints WHERE checkpoint_id LIKE 'sync-retraction:%'")])
+        await snapshots.close()
+    try:
+        asyncio.run(run())
+    finally:
+        store.close(); db.close(); cloud.request("DELETE",base)

@@ -40,6 +40,7 @@ def stats(request: Request):
         "pending_sync": sum(item.status in ("QUEUED", "RETRY_WAIT", "UPLOADING", "UPLOADED", "SNAPSHOT_PENDING") for item in items),
         "last_sync": last_sync.isoformat() if last_sync else None,
         "sync_success_count": sum(item.status == "SYNCHRONIZED" for item in items),
+        "open_conflict_count": edge.conflicts.open_count(),
         "sync_failure_count": sum(item.retry_count for item in items),
         "search_latency_ms": None,
         "connectivity": edge.connectivity.current()["connectivity"],

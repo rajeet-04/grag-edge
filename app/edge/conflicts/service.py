@@ -4,6 +4,8 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime
+from typing import Any, Iterable
+from uuid import NAMESPACE_URL, uuid5
 
 from pydantic import BaseModel, ConfigDict
 
@@ -13,6 +15,12 @@ from app.edge.state.sqlite import EdgeStateDB
 
 
 _CONFLICT_SENSITIVE = frozenset({MemoryType.PROCEDURE, MemoryType.LEARNED_FACT})
+_OPEN_STATUSES = ("OPEN", "RESOLVING")
+RESOLUTIONS = frozenset({"KEEP_LOCAL", "ACCEPT_FLEET", "MERGE"})
+
+
+class ConflictResolutionError(ValueError):
+    """Raised when a resolution request is invalid or contradicts a prior one."""
 
 
 class ConflictRecord(BaseModel):
@@ -48,6 +56,10 @@ class ConflictRecord(BaseModel):
     fleet_sync_state: SyncState
     detected_at: datetime
     status: str = "OPEN"
+    resolution: str | None = None
+    resolution_memory_id: str | None = None
+    resolution_revision: int | None = None
+    resolved_at: datetime | None = None
 
 
 class ConflictService:
@@ -103,21 +115,55 @@ class ConflictService:
     def _record_from_row(row) -> ConflictRecord | None:
         """Decode rows written by this service; ignore pre-existing legacy rows."""
         try:
-            return ConflictRecord.model_validate_json(row["metadata_json"])
+            record = ConflictRecord.model_validate_json(row["metadata_json"])
         except (TypeError, ValueError):
             return None
+        return record.model_copy(update={"status": row["status"]})
 
-    def detect(self, local: MemoryRecord, fleet: MemoryRecord) -> ConflictRecord | None:
-        """Record divergent sensitive revisions which share an immediate base."""
+    def _covered_by_resolution(self, local: MemoryRecord, fleet: MemoryRecord) -> bool:
+        """True when a recorded resolution of this fleet branch precedes the local revision."""
+        with self.db._lock:
+            rows = self.db._connection.execute(
+                "SELECT metadata_json FROM conflicts WHERE logical_id=? AND fleet_memory_id=? AND status='RESOLVED'",
+                (local.logical_id, fleet.memory_id),
+            ).fetchall()
+        for row in rows:
+            try:
+                resolved = ConflictRecord.model_validate_json(row["metadata_json"])
+            except ValueError:
+                continue
+            if resolved.resolution_revision is not None and local.revision >= resolved.resolution_revision:
+                return True
+        return False
+
+    def detect(
+        self,
+        local: MemoryRecord,
+        fleet: MemoryRecord,
+        local_history: Iterable[MemoryRecord] | None = None,
+        fleet_history: Iterable[MemoryRecord] | None = None,
+    ) -> ConflictRecord | None:
+        """Record divergent sensitive revisions of one logical memory.
+
+        Without lineage evidence only branches sharing an immediate base compare.
+        With histories, a branch is never a conflict with its own ancestor, and
+        differing parents are conflicts only when neither side descends from the
+        other; revision numbers alone never decide a winner.
+        """
         if local.logical_id != fleet.logical_id or local.memory_type is not fleet.memory_type:
             return None
-        if local.memory_type not in _CONFLICT_SENSITIVE:
+        if local.memory_type not in _CONFLICT_SENSITIVE or local.is_deleted or fleet.is_deleted:
             return None
-        if local.parent_revision != fleet.parent_revision:
+        if local.content == fleet.content or local.memory_id == fleet.memory_id:
             return None
-        if local.parent_revision is None and local.revision != fleet.revision:
+        if local_history is not None and fleet_history is not None:
+            if local.memory_id in {r.memory_id for r in fleet_history} or fleet.memory_id in {r.memory_id for r in local_history}:
+                return None
+        elif local.parent_revision != fleet.parent_revision:
             return None
-        if local.content == fleet.content:
+        if local.parent_revision == fleet.parent_revision and local.parent_revision is None and local.revision != fleet.revision:
+            return None
+        if self._covered_by_resolution(local, fleet):
             return None
 
         candidate = self._new_conflict(local, fleet)
@@ -157,7 +203,7 @@ class ConflictService:
     def list_open(self) -> list[ConflictRecord]:
         with self.db._lock:
             rows = self.db._connection.execute(
-                "SELECT * FROM conflicts WHERE status='OPEN' ORDER BY created_at, conflict_id"
+                "SELECT * FROM conflicts WHERE status IN ('OPEN','RESOLVING') ORDER BY created_at, conflict_id"
             ).fetchall()
         return [record for row in rows if (record := self._record_from_row(row)) is not None]
 
@@ -167,3 +213,70 @@ class ConflictService:
                 "SELECT * FROM conflicts WHERE conflict_id=?", (conflict_id,)
             ).fetchone()
         return self._record_from_row(row) if row is not None else None
+
+    def open_count(self) -> int:
+        with self.db._lock:
+            return self.db._connection.execute(
+                "SELECT COUNT(*) FROM conflicts WHERE status IN ('OPEN','RESOLVING')"
+            ).fetchone()[0]
+
+    def open_logical_ids(self) -> set[str]:
+        return {conflict.logical_id for conflict in self.list_open()}
+
+    async def resolve(self, conflict_id: str, resolution: str, memories: Any, merged_content: str | None = None) -> ConflictRecord:
+        """Resolve by writing one new local revision above both branches.
+
+        The claim, deterministic new memory id and single-winner finalization make
+        concurrent, repeated and post-crash requests converge on one revision and
+        one CONFLICT_RESOLVED event. Both branches remain in history.
+        """
+        if resolution not in RESOLUTIONS:
+            raise ConflictResolutionError("unknown resolution")
+        if resolution == "MERGE" and not (merged_content and merged_content.strip()):
+            raise ConflictResolutionError("MERGE requires merged content")
+        with self.db.transaction() as conn:
+            row = conn.execute("SELECT * FROM conflicts WHERE conflict_id=?", (conflict_id,)).fetchone()
+            if row is None:
+                raise KeyError(conflict_id)
+            conflict = self._record_from_row(row)
+            if conflict is None:
+                raise KeyError(conflict_id)
+            if conflict.status != "OPEN" and conflict.resolution != resolution:
+                raise ConflictResolutionError("conflict already resolved with " + str(conflict.resolution))
+            if conflict.status == "OPEN":
+                claimed = conflict.model_copy(update={
+                    "status": "RESOLVING", "resolution": resolution,
+                    "resolution_memory_id": str(uuid5(NAMESPACE_URL, "grag-resolution:" + conflict_id)),
+                    "resolution_revision": max(conflict.local_revision, conflict.fleet_revision) + 1,
+                })
+                conn.execute("UPDATE conflicts SET status='RESOLVING',metadata_json=? WHERE conflict_id=?",
+                             (claimed.model_dump_json(), conflict_id))
+                conflict = claimed
+        if conflict.status == "RESOLVED":
+            return conflict
+        if resolution == "KEEP_LOCAL":
+            source = memories.get(conflict.local_memory_id)
+        elif resolution == "ACCEPT_FLEET":
+            source = memories.get(conflict.fleet_memory_id)
+        else:
+            source = None
+        content = merged_content if resolution == "MERGE" else (source.content if source else None)
+        if content is None:
+            raise ConflictResolutionError("resolution source memory is unavailable")
+        await memories.write_resolution(conflict, content)
+        now = utcnow()
+        with self.db.transaction() as conn:
+            row = conn.execute("SELECT * FROM conflicts WHERE conflict_id=?", (conflict_id,)).fetchone()
+            current = self._record_from_row(row)
+            if current.status == "RESOLVED":
+                return current
+            done = current.model_copy(update={"status": "RESOLVED", "resolved_at": now})
+            conn.execute("UPDATE conflicts SET status='RESOLVED',metadata_json=? WHERE conflict_id=?",
+                         (done.model_dump_json(), conflict_id))
+            self.activity.append_in_transaction(conn, ActivityEvent(
+                event_id=f"{conflict_id}:resolved", event_type="CONFLICT_RESOLVED",
+                device_id=done.local_device_id or "edge", memory_id=done.resolution_memory_id, timestamp=now,
+                message="Memory conflict resolved",
+                metadata={"conflict_id": conflict_id, "logical_id": done.logical_id, "resolution": done.resolution,
+                          "resolution_memory_id": done.resolution_memory_id, "resolution_revision": done.resolution_revision}))
+            return done

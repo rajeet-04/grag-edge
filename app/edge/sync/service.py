@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import math
 from typing import Any
 
-from app.edge.memory.models import Sensitivity, SyncPolicy, SyncState
+from app.edge.memory.models import MemoryRecord, Sensitivity, SyncPolicy, SyncState
 from app.edge.memory.store import StoredPoint
 from app.edge.state.activity import ActivityEvent, ActivityLog
 from app.edge.state.sqlite import EdgeStateDB
@@ -30,11 +30,12 @@ class SyncRunResult:
 
 
 class SyncService:
-    def __init__(self, store: Any, memories: Any, outbox: SyncOutbox, db: EdgeStateDB, activity: ActivityLog, remote: Any, device_id: str, embedding_dimension: int = 768, batch_size: int = 50, snapshots: Any | None = None):
+    def __init__(self, store: Any, memories: Any, outbox: SyncOutbox, db: EdgeStateDB, activity: ActivityLog, remote: Any, device_id: str, embedding_dimension: int = 768, batch_size: int = 50, snapshots: Any | None = None, conflicts: Any | None = None):
         self.store, self.memories, self.outbox = store, memories, outbox
         self.db, self.activity, self.remote = db, activity, remote
         self.device_id, self.embedding_dimension, self.batch_size = device_id, embedding_dimension, batch_size
         self.snapshots = snapshots
+        self.conflicts = conflicts
         self._run_lock = asyncio.Lock()
 
     @staticmethod
@@ -172,6 +173,7 @@ class SyncService:
         if self._run_lock.locked():
             return SyncRunResult("RUNNING", pending=len(self.outbox.pending(self.batch_size)))
         async with self._run_lock:
+            await self._blocking(self._scan_conflicts)
             items = self.outbox.claimable(self.batch_size)
             if not items and self.snapshots is None and not self._pending_retractions():
                 return SyncRunResult("IDLE", pending=len(self.outbox.pending(self.batch_size)))
@@ -240,6 +242,7 @@ class SyncService:
             retraction_error = await self._process_retractions()
             if self.snapshots is not None:
                 result = await self._refresh_and_confirm(uploaded, failed, skipped)
+                await self._blocking(self._scan_conflicts)
                 if retraction_error is None:
                     retraction_error = await self._confirm_retractions()
                 if retraction_error and result.refresh_error is None:
@@ -358,6 +361,49 @@ class SyncService:
         snapshot_pending = sum(item.status in ("UPLOADED","SNAPSHOT_PENDING") for item in self.outbox.all())
         status = "DEGRADED" if failed or error else "SNAPSHOT_PENDING" if snapshot_pending else "COMPLETED"
         return SyncRunResult(status,uploaded,failed,skipped,pending,synchronized,snapshot_pending,error)
+
+    _UNSETTLED = (SyncState.NEW, SyncState.LOCAL_DIRTY, SyncState.LOCAL_ONLY, SyncState.AWAITING_APPROVAL,
+                  SyncState.QUEUED, SyncState.UPLOADING, SyncState.RETRY_WAIT)
+
+    def _scan_conflicts(self) -> int:
+        """Detect divergence from the local branch to fleet and block its upload.
+
+        Only unsettled local heads are compared; each is checked against the
+        newest fleet revision using actual retained lineage.
+        """
+        list_fleet = getattr(self.store, "list_fleet_points", None)
+        if self.conflicts is None or list_fleet is None:
+            return 0
+        heads: dict[str, Any] = {}
+        for record in self.memories._records():
+            if record.logical_id not in heads or heads[record.logical_id].revision < record.revision:
+                heads[record.logical_id] = record
+        fleet_by_logical: dict[str, list[Any]] = {}
+        for point in list_fleet():
+            if point.payload.get("record_type") == "memory":
+                try:
+                    fleet_by_logical.setdefault(point.payload["logical_id"], []).append(MemoryRecord.model_validate(point.payload))
+                except Exception:
+                    continue
+        found = 0
+        for logical_id, local in heads.items():
+            fleet_records = fleet_by_logical.get(logical_id)
+            if not fleet_records or local.is_deleted or local.sync_state not in self._UNSETTLED:
+                continue
+            fleet = max(fleet_records, key=lambda record: (record.revision, record.memory_id))
+            conflict = self.conflicts.detect(local, fleet,
+                local_history=[r for r in self.memories._records() if r.logical_id == logical_id],
+                fleet_history=fleet_records)
+            if conflict is None or self.conflicts.get(conflict.conflict_id).status not in ("OPEN", "RESOLVING"):
+                continue
+            found += 1
+            for item in self.outbox.all():
+                if item.memory_id == local.memory_id and item.status in ("QUEUED", "RETRY_WAIT", "UPLOADING"):
+                    self.outbox.cancel(item.id, SyncState.CONFLICTED.value)
+            with self.db.transaction() as conn:
+                conn.execute("UPDATE memory_policy SET sync_state='CONFLICTED',updated_at=? WHERE memory_id=? AND sync_state NOT IN ('SUPERSEDED','SYNCHRONIZED')",
+                             (datetime.now(timezone.utc).isoformat(), local.memory_id))
+        return found
 
     def _pending_retractions(self) -> list[dict[str, Any]]:
         with self.db._lock:
