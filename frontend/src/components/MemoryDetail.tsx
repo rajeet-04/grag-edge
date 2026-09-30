@@ -1,0 +1,18 @@
+import type { MemoryRecord } from "../api/types";
+
+export default function MemoryDetail({ record, onClose }: { record: MemoryRecord; onClose: () => void }) {
+  return (
+    <aside className="panel" data-testid="memory-detail" aria-label="Memory detail">
+      <div className="row"><h2 style={{ flex: 1 }}>Memory detail</h2><button onClick={onClose}>Close</button></div>
+      <div className="content mono" style={{ whiteSpace: "pre-wrap", maxHeight: "16em", overflow: "auto" }}>{record.content}</div>
+      <dl className="mono">
+        <dt>memory_id</dt><dd>{record.memory_id}</dd>
+        <dt>logical_id</dt><dd>{record.logical_id}</dd>
+        <dt>revision</dt><dd>{record.revision}</dd>
+        <dt>device</dt><dd>{record.device_id}</dd>
+        <dt>sync</dt><dd>{record.sync_state}</dd>
+        <dt>tags</dt><dd>{(record.tags ?? []).join(", ") || "none"}</dd>
+      </dl>
+    </aside>
+  );
+}
