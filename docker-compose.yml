@@ -138,6 +138,53 @@ services:
       - grag-edge-net
       - grag-cloud-net
 
+  # ── Optional Robot B (fleet-demo profile): isolated shard + SQLite volume ──
+  robot-b-api:
+    profiles: ["fleet-demo"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: grag-robot-b-api
+    ports:
+      - "8002:8000"
+    volumes:
+      - robot_b_data:/data
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password}
+      - OLLAMA_BASE_URL=${OLLAMA_DOCKER_BASE_URL:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3.5:0.8b}
+      - QDRANT_EDGE_PATH=/data/qdrant-edge
+      - EDGE_EMBEDDING_DIMENSION=768
+      - EDGE_STATE_PATH=/data/edge-state.db
+      - DEVICE_ID=ROBOT-02
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant-server:6333}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-grag_fleet_memory}
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - CONNECTIVITY_INTERVAL_SECONDS=${CONNECTIVITY_INTERVAL_SECONDS:-5}
+      - SYNC_INTERVAL_SECONDS=${SYNC_INTERVAL_SECONDS:-2}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - API_KEY=${API_KEY:-}
+      - MODEL_NAME=${MODEL_NAME:-grag-pipeline-v1}
+    depends_on:
+      ollama:
+        condition: service_healthy
+      qdrant-server:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - grag-edge-net
+      - grag-cloud-net
+
   # ── GRAG Edge operations console (depends only on the edge API) ───────────
   grag-edge-ui:
     build:
@@ -211,5 +258,6 @@ volumes:
     name: grag-edge-ollama-data
     external: true
   edge_data:
+  robot_b_data:
   qdrant_server_data:
   open_webui_data:
