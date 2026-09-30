@@ -19,6 +19,7 @@ from qdrant_edge import (
     Query,
     SearchRequest,
     SparseVector,
+    ScrollRequest,
     UpdateOperation,
 )
 
@@ -197,6 +198,22 @@ class QdrantEdgeStore:
         if self._fleet is None:
             return None
         return self._retrieve(self._fleet, point_id)
+
+    def list_points(self) -> list[StoredPoint]:
+        shard = self._require_open()
+        result: list[StoredPoint] = []
+        offset = None
+        while True:
+            records, offset = shard.scroll(ScrollRequest(offset=offset, limit=256, with_payload=True, with_vector=True))
+            for record in records:
+                vectors = record.vector or {}
+                dense = vectors.get("dense", []) if isinstance(vectors, dict) else vectors
+                sparse = vectors.get("text") if isinstance(vectors, dict) else None
+                if isinstance(sparse, SparseVector):
+                    sparse = {"indices": list(sparse.indices), "values": list(sparse.values)}
+                result.append(StoredPoint(str(record.id), list(dense), sparse, dict(record.payload or {})))
+            if offset is None:
+                return result
 
     @classmethod
     def _retrieve(cls, shard: EdgeShard, point_id: str) -> StoredPoint | None:

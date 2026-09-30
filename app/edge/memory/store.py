@@ -29,6 +29,10 @@ class EdgeMemoryStore(Protocol):
         """Return a point by identifier, if present."""
         ...
 
+    def list_points(self) -> list[StoredPoint]:
+        """Return persisted local points for history and current-revision checks."""
+        ...
+
     def close(self) -> None:
         """Flush and release store resources."""
         ...
