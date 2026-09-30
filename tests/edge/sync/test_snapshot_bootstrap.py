@@ -106,3 +106,33 @@ def test_restart_after_publication_before_checkpoint_reconciles_once(tmp_path, m
         assert [e.event_type for e in sync.activity.list(20)].count("FLEET_REFRESH_COMPLETED")==1
         await sync.close()
     asyncio.run(run())
+
+
+def test_incomplete_committed_pointer_is_rejected_without_silent_empty_fleet(tmp_path):
+    import shutil
+    from uuid import uuid4
+    import json
+    store=QdrantEdgeStore(tmp_path/"local",tmp_path/"fleet",4); store.open(); store.close()
+    generation=str(uuid4())
+    shutil.copytree(tmp_path/"fleet",tmp_path/"fleet-generations"/generation)
+    (tmp_path/"fleet-current.json").write_text(json.dumps({"generation":generation}))
+    reopened=QdrantEdgeStore(tmp_path/"local",tmp_path/"fleet",4)
+    with pytest.raises(RuntimeError,match="pointer is corrupt"):
+        reopened.open()
+
+
+def test_first_committed_generation_is_recoverable_if_current_pointer_is_lost(tmp_path):
+    from uuid import uuid4
+    import json
+    store=QdrantEdgeStore(tmp_path/"local",tmp_path/"fleet",4); store.open()
+    generation=str(uuid4()); store._generations.mkdir()
+    target=store._generations/generation
+    candidate=store._open_shard(target,store._config)
+    store._publish_generation(target,candidate,"full")
+    metadata=store.fleet_snapshot_metadata()
+    store.close()
+    (tmp_path/"fleet-current.json").unlink()
+    reopened=QdrantEdgeStore(tmp_path/"local",tmp_path/"fleet",4); reopened.open()
+    assert reopened.fleet_snapshot_metadata()==metadata
+    assert json.loads((tmp_path/"fleet-current.json").read_text())==metadata
+    reopened.close()

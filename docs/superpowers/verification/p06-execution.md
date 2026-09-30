@@ -20,3 +20,8 @@
 - Local writes complete during paused network download and while copy holds the fleet access lock. Filesystem/native work is offloaded to a worker thread; cancellation waits that worker before removing the download or allowing resource shutdown.
 - Ruling: use an atomic `(manifest, generation)` capture and reject a stale generation before applying a downloaded partial. A separate service mutex serializes network work, while the adapter mutex serializes native publication and close. Cost if wrong: a stale refresh is retried instead of attempting an unsafe incremental base.
 - Ruling: retain a validated generation if pointer replacement succeeded but subsequent durability fsync failed, so restart never follows a dangling committed pointer. Previous generations and previous pointer metadata remain available. Cost if wrong: disk space is retained until later retention policy work.
+
+### Additional recovery regressions
+
+- Incomplete committed metadata (valid generation UUID but absent refresh ID/timestamp/kind) was RED (`DID NOT RAISE`), then GREEN after validating all publication fields and closing failed-load handles.
+- Losing the current pointer after the first valid publication was RED (restart silently selected the original empty shard), then GREEN after retaining an atomic recovery pointer even for the first publication. Both current/recovery references protect their validated generation from cleanup after a durability error. Stages with neither pointer remain ignored.

@@ -75,6 +75,9 @@ class QdrantEdgeStore:
                     self._fleet = EdgeShard.load(str(self._fleet_active_path), config)
                     self._validate_fleet(self._fleet)
                 except Exception:
+                    if self._fleet:
+                        self._fleet.close()
+                        self._fleet = None
                     previous = self._read_json(self._previous_pointer)
                     if not previous or previous == metadata:
                         raise RuntimeError("Committed fleet generation cannot be opened")
@@ -86,8 +89,8 @@ class QdrantEdgeStore:
                 self._fleet_metadata = metadata
             else:
                 self._fleet = self._open_shard(self.fleet_path, config)
-        except RuntimeError as exc:
-            if "empty or corrupt" not in str(exc):
+        except Exception as exc:
+            if not isinstance(exc, RuntimeError) or "empty or corrupt" not in str(exc):
                 self._local.close()
                 self._local = None
                 raise
@@ -308,17 +311,25 @@ class QdrantEdgeStore:
             raise ValueError("Invalid fleet generation identifier")
         return self._generations / generation
 
+    def _validate_pointer_metadata(self, metadata: dict[str, Any]) -> None:
+        self._generation_path(metadata)
+        if str(UUID(metadata["refresh_id"])) != metadata["refresh_id"]:
+            raise ValueError("Invalid refresh identifier")
+        timestamp = datetime.fromisoformat(metadata["timestamp"])
+        if timestamp.tzinfo is None or metadata["kind"] not in {"full", "partial"}:
+            raise ValueError("Invalid fleet publication metadata")
+
     def _read_fleet_pointer(self) -> dict[str, Any] | None:
         try:
             metadata = self._read_json(self._pointer)
             if metadata:
-                self._generation_path(metadata)
+                self._validate_pointer_metadata(metadata)
                 return metadata
-        except (ValueError, KeyError):
+        except (ValueError, KeyError, TypeError, AttributeError):
             pass
         previous = self._read_json(self._previous_pointer)
         if previous:
-            self._generation_path(previous)
+            self._validate_pointer_metadata(previous)
             self._write_pointer(self._pointer, previous)
             return previous
         if self._pointer.exists():
@@ -377,8 +388,9 @@ class QdrantEdgeStore:
                     "timestamp": datetime.now(timezone.utc).isoformat(), "kind": kind}
         with self._fleet_lock:
             previous = self._fleet_metadata
-            if previous:
-                self._write_pointer(self._previous_pointer, previous)
+            # First bootstrap also needs a committed recovery reference; orphan
+            # stages without either pointer remain ignored on startup.
+            self._write_pointer(self._previous_pointer, previous or metadata)
             self._write_pointer(self._pointer, metadata)
             old = self._fleet
             self._fleet = shard
@@ -408,8 +420,8 @@ class QdrantEdgeStore:
                 published = True
             finally:
                 if not published:
-                    committed = self._read_json(self._pointer)
-                    if committed and committed.get("generation") == stage.name:
+                    pointers = [self._read_json(self._pointer), self._read_json(self._previous_pointer)]
+                    if any(pointer and pointer.get("generation") == stage.name for pointer in pointers):
                         # The pointer may have been replaced before a directory fsync
                         # failed. Retain this validated target for restart recovery.
                         if shard:
@@ -471,8 +483,8 @@ class QdrantEdgeStore:
                 published = True
             finally:
                 if not published:
-                    committed = self._read_json(self._pointer)
-                    if committed and committed.get("generation") == stage.name:
+                    pointers = [self._read_json(self._pointer), self._read_json(self._previous_pointer)]
+                    if any(pointer and pointer.get("generation") == stage.name for pointer in pointers):
                         # The pointer may have been replaced before a directory fsync
                         # failed. Retain this validated target for restart recovery.
                         if shard:
