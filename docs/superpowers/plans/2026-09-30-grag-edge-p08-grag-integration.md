@@ -38,9 +38,10 @@
 - Replace `kb_search_node` with `edge_memory_search_node(state: GraphState) -> dict[str, Any]`.
 - Add state field `edge_memory_hits: list[dict[str, Any]]`.
 - Each hit carries content, origin, revision, source/device provenance, and retrieval scores.
+- Emit `SEARCH_COMPLETED` with query mode, result count, local/fleet origin counts, and measured retrieval latency after successful edge retrieval.
 
 - [ ] **Step 1: Write graph-node tests**
-  Assert local and fleet hits populate state, provenance reaches context builder, and missing fleet data does not fail.
+  Assert local and fleet hits populate state, provenance reaches context builder, missing fleet data does not fail, and `SEARCH_COMPLETED` records origin counts plus retrieval latency.
 - [ ] **Step 2: Run**
   Expected: FAIL.
 - [ ] **Step 3: Implement node and context mapping**
