@@ -38,12 +38,13 @@
 - Produce `MemoryRecord` with the fields fixed in the spec plus `is_deleted: bool = False`.
 - Produce: `MemoryService.create(command: CreateMemory) -> MemoryRecord`.
 - Produce: `MemoryService.revise(logical_id: str, command: ReviseMemory) -> MemoryRecord`.
+- Create/revise obtains dense vectors through `EmbeddingService.embed_with_context(content, "search_document")`, sparse vectors through `EdgeBm25Indexer.embed_document(content)`, then writes the complete `StoredPoint` to the mutable local shard.
 - Produce: `MemoryService.get(memory_id: str) -> MemoryRecord | None`.
 - Produce: `MemoryService.history(logical_id: str) -> list[MemoryRecord]`.
 - Produce: `MemoryService.tombstone(logical_id: str) -> MemoryRecord`.
 
 - [ ] **Step 1: Write revision/provenance tests**
-  Assert revision starts at 1, revise produces revision 2 with parent 1, old revision remains retrievable, deterministic content hash, and tombstone hides current memory from normal search.
+  Assert revision starts at 1, revise produces revision 2 with parent 1, old revision remains retrievable, deterministic content hash, dense+sparse vectors are written for each revision, and tombstone hides current memory from normal search.
 - [ ] **Step 2: Run**
   Run: `uv run pytest tests/edge/memory/test_memory_service.py -v`
   Expected: FAIL.
