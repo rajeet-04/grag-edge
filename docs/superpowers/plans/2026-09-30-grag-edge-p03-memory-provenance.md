@@ -59,19 +59,23 @@
 **Files:**
 - Create: `app/edge/api/__init__.py`
 - Create: `app/edge/api/memories.py`
+- Create: `app/edge/runtime.py`
 - Modify: `app/main.py`
 - Test: `tests/edge/api/test_memories.py`
+- Test: `tests/edge/test_runtime.py`
 
 **Interfaces:**
 - Produce endpoints: `POST /api/v1/edge/memories`, `GET /api/v1/edge/memories`, `GET /api/v1/edge/memories/{id}`, `PATCH /api/v1/edge/memories/{id}`, `POST /api/v1/edge/search`.
+- `GET /memories` supports filters `source`, `memory_type`, `sync_state`, `importance`, `device_id`, `tag`, `from_time`, and `to_time`.
 - Search response exposes origin, combined score, dense score, sparse score, revision, and sync state.
+- Produce `EdgeRuntime` in `app/edge/runtime.py` owning `QdrantEdgeStore`, `HybridSearchService`, and `MemoryService`; FastAPI stores it in `app.state.edge_runtime` during lifespan startup and closes it during shutdown.
 
-- [ ] **Step 1: Write API tests**
-  Assert create/get/revise/list/search success, 404 for unknown ID, 422 for empty search query, and provenance fields in responses.
+- [ ] **Step 1: Write API/runtime tests**
+  Assert create/get/revise/list/search success, every documented list filter, 404 for unknown ID, 422 for empty search query, provenance fields in responses, one runtime instance per app lifespan, and clean store shutdown.
 - [ ] **Step 2: Run**
   Run: `uv run pytest tests/edge/api/test_memories.py -v`
   Expected: FAIL.
-- [ ] **Step 3: Implement router using `MemoryService` and `HybridSearchService`**
+- [ ] **Step 3: Implement `EdgeRuntime` and router dependencies using `MemoryService` and `HybridSearchService`**
 - [ ] **Step 4: Verify**
   Run memory service and API tests; expected PASS.
 - [ ] **Step 5: Commit**
