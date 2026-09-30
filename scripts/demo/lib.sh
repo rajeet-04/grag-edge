@@ -32,7 +32,9 @@ is_cloud_connected() {
 }
 
 api_get() { docker exec "$1" curl -fsS -m 10 "http://localhost:8000$2"; }
-api_send() { docker exec -i "$1" curl -fsS -m "${4:-120}" -X "$2" -H 'Content-Type: application/json' ${API_HEADER:+-H "$API_HEADER"} --data-binary @- "http://localhost:8000$3"; }
+api_send() {  # cid method path [timeout]; JSON body on stdin; API key stays inside the container
+  docker exec -i "$1" sh -c 'curl -fsS -m "$1" -X "$2" -H "Content-Type: application/json" ${API_KEY:+-H "Authorization: Bearer $API_KEY"} --data-binary @- "http://localhost:8000$3"' _ "${4:-120}" "$2" "$3"
+}
 
 json_field() { python3 -c 'import json,sys; d=json.load(sys.stdin)
 for k in sys.argv[1].split("."): d=d[k]

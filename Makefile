@@ -1,4 +1,4 @@
-.PHONY: test compose-config baseline-check demo-reset demo-start demo-offline demo-online demo-status
+.PHONY: test compose-config baseline-check demo-reset demo-start demo-offline demo-online demo-status demo-conflict demo-acceptance
 
 test:
 	uv run pytest -q
@@ -23,3 +23,9 @@ demo-online:
 
 demo-status:
 	bash scripts/demo/status.sh
+
+demo-conflict:
+	bash scripts/demo/conflict.sh
+
+demo-acceptance:
+	bash scripts/demo/acceptance.sh

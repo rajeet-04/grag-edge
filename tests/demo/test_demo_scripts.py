@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-TARGETS = ["demo-reset", "demo-start", "demo-offline", "demo-online", "demo-status"]
+TARGETS = ["demo-reset", "demo-start", "demo-offline", "demo-online", "demo-status", "demo-conflict", "demo-acceptance"]
 
 FAKE_DOCKER = r'''#!/usr/bin/env bash
 state="$FAKE_STATE"; echo "$*" >> "$state/calls"
