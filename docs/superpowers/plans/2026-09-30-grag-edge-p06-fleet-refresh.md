@@ -61,7 +61,8 @@
 **Interfaces:**
 - Produce: `FleetSnapshotService.refresh() -> FleetRefreshResult`.
 - Produce: `QdrantEdgeStore.fleet_manifest() -> dict[str, Any]`.
-- Produce: `QdrantEdgeStore.apply_fleet_snapshot(snapshot_path: Path) -> None`.
+- Produce: `QdrantEdgeStore.stage_and_apply_fleet_snapshot(snapshot_path: Path) -> None`.
+- For partial refresh, acquire the fleet-only lock, close the active fleet shard, clone its directory to a sibling staging directory, load the staging shard, apply `update_from_snapshot()` there, validate it, then atomically replace/reopen the fleet directory. On any error, reopen the untouched active directory and discard staging.
 - Store a successful refresh checkpoint in `sync_checkpoints`.
 - Emit `FLEET_REFRESH_STARTED` before network/download work and `FLEET_REFRESH_COMPLETED` only after a successfully applied/validated fleet shard.
 
@@ -69,8 +70,8 @@
   Seed fleet revision A, capture manifest, change server to revision B, request partial snapshot, apply it, and assert B is searchable. Assert failed apply keeps A and does not emit a completion event; successful apply emits one start and one completion event.
 - [ ] **Step 2: Run**
   Expected: FAIL.
-- [ ] **Step 3: Implement partial refresh**
-  Hold a fleet-only `asyncio.Lock` around apply; do not lock mutable-local writes.
+- [ ] **Step 3: Implement staged partial refresh**
+  Hold a fleet-only `asyncio.Lock` around close/copy/apply/validate/swap/reopen; do not lock mutable-local writes.
 - [ ] **Step 4: Verify**
   Run bootstrap + partial-refresh tests; expected PASS.
 - [ ] **Step 5: Commit**
@@ -85,10 +86,11 @@
 
 **Interfaces:**
 - After all current uploads are acknowledged, sync run may transition UPLOADED → SNAPSHOT_PENDING → SYNCHRONIZED only after a successful fleet refresh.
+- Emit `SYNC_COMPLETED` exactly once when the run reaches `SYNCHRONIZED`.
 - Produce history endpoint: `GET /api/v1/edge/sync/history`.
 
 - [ ] **Step 1: Write lifecycle test**
-  Assert an uploaded memory is not SYNCHRONIZED until the refreshed fleet shard contains the acknowledged revision.
+  Assert an uploaded memory is not SYNCHRONIZED until the refreshed fleet shard contains the acknowledged revision, and `SYNC_COMPLETED` is emitted only after that confirmation.
 - [ ] **Step 2: Run**
   Expected: FAIL.
 - [ ] **Step 3: Integrate refresh into sync service**
