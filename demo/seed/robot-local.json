@@ -1,0 +1,70 @@
+{
+  "dataset": "grag-edge-demo-robot-local",
+  "device_id": "robot-edge-001",
+  "memories": [
+    {
+      "memory_id": "10ade000-0000-0000-0003-000000000001",
+      "logical_id": "10ade000-0000-0000-0004-000000000001",
+      "equipment": "Pump P-41",
+      "memory_type": "operator_note",
+      "content": "Operator note: Pump P-41 discharge pressure fluctuates during morning shift; suspect suction strainer fouling.",
+      "importance": "normal",
+      "sync_policy": "auto",
+      "sensitivity": "fleet_safe",
+      "tags": [
+        "pump",
+        "P-41"
+      ],
+      "source_type": "demo_seed",
+      "source_id": "local-seed-1"
+    },
+    {
+      "memory_id": "10ade000-0000-0000-0003-000000000002",
+      "logical_id": "10ade000-0000-0000-0004-000000000002",
+      "equipment": "Compressor C-17",
+      "memory_type": "observation",
+      "content": "Robot inspection: Compressor C-17 oil level nominal, no leaks visible at 07:30 walkdown.",
+      "importance": "normal",
+      "sync_policy": "auto",
+      "sensitivity": "fleet_safe",
+      "tags": [
+        "compressor",
+        "C-17"
+      ],
+      "source_type": "demo_seed",
+      "source_id": "local-seed-2"
+    },
+    {
+      "memory_id": "10ade000-0000-0000-0003-000000000003",
+      "logical_id": "10ade000-0000-0000-0004-000000000003",
+      "equipment": "Motor M-08",
+      "memory_type": "operator_note",
+      "content": "Private site note: Motor M-08 maintenance window is reserved for contractor access; do not share outside this site.",
+      "importance": "normal",
+      "sync_policy": "local_only",
+      "sensitivity": "internal",
+      "tags": [
+        "motor",
+        "M-08"
+      ],
+      "source_type": "demo_seed",
+      "source_id": "local-seed-3"
+    },
+    {
+      "memory_id": "10ade000-0000-0000-0003-000000000004",
+      "logical_id": "10ade000-0000-0000-0004-000000000004",
+      "equipment": "Valve V-22",
+      "memory_type": "procedure",
+      "content": "Local procedure: Valve V-22 manual bypass. Isolate upstream, open bypass slowly, confirm flow before closing main.",
+      "importance": "high",
+      "sync_policy": "local_only",
+      "sensitivity": "fleet_safe",
+      "tags": [
+        "valve",
+        "V-22"
+      ],
+      "source_type": "demo_seed",
+      "source_id": "local-seed-4"
+    }
+  ]
+}

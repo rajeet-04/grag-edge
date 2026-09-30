@@ -1,0 +1,21 @@
+{
+  "dataset": "grag-edge-demo-conflict",
+  "device_id": "robot-edge-002",
+  "created_at": "2026-09-02T08:00:00+00:00",
+  "memories": [
+    {
+      "memory_id": "10ade000-0000-0000-0005-000000000001",
+      "logical_id": "10ade000-0000-0000-0004-000000000004",
+      "equipment": "Valve V-22",
+      "memory_type": "procedure",
+      "content": "Fleet procedure: Valve V-22 manual bypass. Close downstream first, crack bypass to 10 percent, and confirm pressure before isolating main.",
+      "importance": "high",
+      "tags": [
+        "valve",
+        "V-22"
+      ],
+      "source_type": "conflict_seed",
+      "source_id": "conflict-seed-1"
+    }
+  ]
+}

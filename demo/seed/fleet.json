@@ -1,0 +1,67 @@
+{
+  "dataset": "grag-edge-demo-fleet",
+  "device_id": "robot-edge-002",
+  "created_at": "2026-09-01T08:00:00+00:00",
+  "memories": [
+    {
+      "memory_id": "10ade000-0000-0000-0001-000000000001",
+      "logical_id": "10ade000-0000-0000-0002-000000000001",
+      "equipment": "Pump P-41",
+      "memory_type": "incident",
+      "content": "Fleet incident: Pump P-41 seal leak traced to worn mechanical seal after 4,200 operating hours; replace seal and recheck discharge pressure.",
+      "importance": "high",
+      "tags": [
+        "pump",
+        "seal",
+        "P-41"
+      ],
+      "source_type": "fleet_seed",
+      "source_id": "fleet-seed-1"
+    },
+    {
+      "memory_id": "10ade000-0000-0000-0001-000000000002",
+      "logical_id": "10ade000-0000-0000-0002-000000000002",
+      "equipment": "Compressor C-17",
+      "memory_type": "procedure",
+      "content": "Fleet procedure: Compressor C-17 surge recovery. Open the anti-surge valve, reduce load to 60 percent, and log vibration before restart.",
+      "importance": "high",
+      "tags": [
+        "compressor",
+        "surge",
+        "C-17"
+      ],
+      "source_type": "fleet_seed",
+      "source_id": "fleet-seed-2"
+    },
+    {
+      "memory_id": "10ade000-0000-0000-0001-000000000003",
+      "logical_id": "10ade000-0000-0000-0002-000000000003",
+      "equipment": "Motor M-08",
+      "memory_type": "observation",
+      "content": "Fleet observation: Motor M-08 winding temperature trends 6 C above baseline when ambient exceeds 35 C; inspect cooling fins.",
+      "importance": "normal",
+      "tags": [
+        "motor",
+        "thermal",
+        "M-08"
+      ],
+      "source_type": "fleet_seed",
+      "source_id": "fleet-seed-3"
+    },
+    {
+      "memory_id": "10ade000-0000-0000-0001-000000000004",
+      "logical_id": "10ade000-0000-0000-0002-000000000004",
+      "equipment": "Valve V-22",
+      "memory_type": "learned_fact",
+      "content": "Fleet learned fact: Valve V-22 actuator needs recalibration whenever supply air drops under 5.5 bar.",
+      "importance": "normal",
+      "tags": [
+        "valve",
+        "actuator",
+        "V-22"
+      ],
+      "source_type": "fleet_seed",
+      "source_id": "fleet-seed-4"
+    }
+  ]
+}
