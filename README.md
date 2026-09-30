@@ -60,8 +60,8 @@ app/
 git clone https://github.com/rajeet-04/GRAG-AI.git
 cd grag-ai
 
-# Create your .env
-cp env.example .env
+# Create your .env without replacing existing local settings
+if [ ! -f .env ]; then cp .env.example .env; fi
 ```
 
 ### 2. Configure Environment
@@ -74,11 +74,11 @@ NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=your_password
 
-# Ollama Cloud Configuration (Context Builder, Explanation Agent — High Performance)
+# Required by current query and entity/relation extraction paths
+# P0 preserves these legacy cloud calls; local routing remains a spec conformance gap.
 OLLAMA_CLOUD_URL=https://ollama.com
 OLLAMA_CLOUD_MODEL=minimax-m2.7:cloud
 OLLAMA_CLOUD_API_KEY=your_cloud_api_key_here
-OLLAMA_CLOUD_ENABLED=true  # Set to true to offload reasoning to cloud
 
 # Required: ChromaDB
 CHROMADB_PATH=./data/chromadb
@@ -177,10 +177,21 @@ curl -N http://localhost:8000/v1/chat/completions \
 
 ## Development
 
+### Baseline Verification
+
+Create a local configuration file from the secret-free sample without replacing existing settings, then run the CPU-compatible checks:
+
+```bash
+if [ ! -f .env ]; then cp .env.example .env; fi
+make baseline-check
+```
+
+The baseline check runs the full pytest suite and validates the rendered Compose configuration. It does not start containers, so it does not require an NVIDIA runtime or a cloud API key. The imported GRAG query and entity/relation extraction paths still select Ollama Cloud in P0; set `OLLAMA_CLOUD_API_KEY` to run those application flows. The GRAG Edge spec requires local inference without external credentials, so migrating these paths remains an unresolved spec conformance issue. Starting the local Ollama service still requires a compatible NVIDIA runtime.
+
 ### Running Tests
 
 ```bash
-pytest -q
+make test
 ```
 
 ### Project Phases

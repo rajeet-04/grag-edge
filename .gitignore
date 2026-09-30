@@ -2,7 +2,12 @@
 .planning/
 AGENT/
 /data/
+data/qdrant-edge/
+data/edge-state.db*
 /node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/build/
 app/ingestion/__pycache__/*
 *.pyc
 *.pyo
@@ -31,3 +36,4 @@ venv.bak/
 htmlcov/
 *.env.*
 .env
+!.env.example
