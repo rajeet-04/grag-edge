@@ -33,15 +33,20 @@
 - Modify: `env.example`
 - Modify: `app/config.py`
 - Create: `app/edge/sync/server_client.py`
+- Modify: `pyproject.toml`
 - Test: `tests/edge/sync/test_server_client.py`
 
 **Interfaces:**
 - Produce Docker network `grag-cloud-net` and service `qdrant-server`.
 - Only `fastapi` joins both `grag-edge-net` and `grag-cloud-net`.
+- Produce settings: `QDRANT_URL`, `QDRANT_COLLECTION` defaulting to `grag_fleet_memory`, optional `QDRANT_API_KEY`.
 - Produce: `QdrantServerClient.health() -> CloudHealth`.
-- Produce: `upsert_memory(memory: MemoryRecord) -> RemoteAck` using deterministic remote point identity derived from `memory_id`.
+- Produce: `ensure_collection(embedding_dimension: int = 768) -> None`; create exactly one shard with dense vector `dense` using cosine distance and sparse vector `text` with IDF-compatible configuration.
+- Produce: `upsert_point(point: StoredPoint) -> RemoteAck` using `StoredPoint.id == memory_id` as deterministic remote point identity and preserving both dense and sparse vectors plus payload.
+- Add `qdrant-client` through uv and lock the resolved version.
 
-- [ ] **Step 1: Write client classification/idempotency tests**
+- [ ] **Step 1: Write collection-schema, client classification, and idempotency tests**
+  Assert collection creation is idempotent, uses one shard and matching dense/sparse names, repeated point upsert replaces the same remote point, and the uploaded vectors/payload match the local `StoredPoint`.
 - [ ] **Step 2: Run**
   Expected: FAIL.
 - [ ] **Step 3: Add server service, config, and client**
@@ -91,13 +96,14 @@
 - SSE resumes from `Last-Event-ID` when supplied and emits heartbeat comments without duplicating persisted events.
 - Initial stats expose local/fleet memory counts, pending sync, last sync, sync success/failure, search latency if available, and connectivity; conflict count is added in P7.
 - State transitions: QUEUED → UPLOADING → UPLOADED; failures → RETRY_WAIT → QUEUED with bounded exponential backoff.
-- Emit `SYNC_STARTED`, `SYNC_RETRY`, and `SYNC_COMPLETED` activity events at their owning transitions.
+- Emit `DEVICE_STARTED` at runtime startup, plus `SYNC_STARTED` and `SYNC_RETRY` at their owning transitions. `SYNC_COMPLETED` is reserved for P6 after upload plus fleet refresh reaches `SYNCHRONIZED`.
 
 - [ ] **Step 1: Write worker/API/lifespan/SSE tests**
   Assert local APIs remain usable while server client fails; restart of an UPLOADING item retries safely; manual run triggers work but does not wait for all remote operations; app startup is READY with cloud absent; only one monitor/worker pair starts; SSE reconnect via `Last-Event-ID` does not duplicate events.
 - [ ] **Step 2: Run**
   Expected: FAIL.
 - [ ] **Step 3: Implement worker lifecycle, runtime startup/shutdown, status/stats/activity APIs, and SSE stream**
+  The worker reads the complete `StoredPoint` from the local store for each queued memory revision and passes it to `QdrantServerClient.upsert_point`.
 - [ ] **Step 4: Verify**
   Run all sync tests; expected PASS.
 - [ ] **Step 5: Commit**
