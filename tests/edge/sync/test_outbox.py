@@ -62,3 +62,55 @@ def test_upload_claim_and_policy_state_roll_back_atomically(tmp_path: Path):
     assert outbox.get(item.id).status == "QUEUED"
     assert outbox.attempts(item.id) == []
     db.close()
+
+
+def test_attempt_history_distinguishes_failure_then_success(tmp_path: Path):
+    db = EdgeStateDB(tmp_path / "state.db")
+    outbox = SyncOutbox(db)
+    item = outbox.enqueue("memory-4", "logical-4", 1)
+    outbox.mark_uploading(item.id)
+    outbox.mark_retry(item.id, "network timeout")
+    outbox.mark_uploading(item.id)
+    outbox.mark_uploaded(item.id)
+    attempts = outbox.attempts(item.id)
+    assert [row["result"] for row in attempts] == ["FAILED", "SUCCESS"]
+    assert all(row["started_at"] and row["finished_at"] for row in attempts)
+    assert attempts[0]["error"] == "network timeout" and attempts[1]["error"] is None
+    assert all(row["finished_at"] >= row["started_at"] for row in attempts)
+    db.close()
+
+
+def test_cancel_and_restart_recovery_finalize_attempts(tmp_path: Path):
+    db = EdgeStateDB(tmp_path / "state.db")
+    outbox = SyncOutbox(db)
+    cancelled = outbox.enqueue("memory-5", "logical-5", 1)
+    outbox.mark_uploading(cancelled.id)
+    outbox.cancel(cancelled.id)
+    interrupted = outbox.enqueue("memory-6", "logical-6", 1)
+    outbox.mark_uploading(interrupted.id)
+    assert outbox.recover_interrupted() == 1
+    cancelled_attempt = outbox.attempts(cancelled.id)[0]
+    interrupted_attempt = outbox.attempts(interrupted.id)[0]
+    assert cancelled_attempt["result"] == "CANCELLED" and cancelled_attempt["finished_at"]
+    assert interrupted_attempt["result"] == "INTERRUPTED" and interrupted_attempt["finished_at"]
+    assert outbox.get(interrupted.id).status == "QUEUED"
+    db.close()
+
+
+def test_legacy_attempt_table_migrates_without_losing_history(tmp_path: Path):
+    import sqlite3
+
+    path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE sync_attempts(id TEXT PRIMARY KEY,outbox_id TEXT NOT NULL,attempt_number INTEGER NOT NULL,error TEXT,created_at TEXT NOT NULL,UNIQUE(outbox_id,attempt_number))")
+    conn.execute("INSERT INTO sync_attempts VALUES('attempt-1','outbox-1',1,'network timeout','2026-09-30T00:00:00+00:00')")
+    conn.commit()
+    conn.close()
+
+    db = EdgeStateDB(path)
+    columns = {row["name"] for row in db._connection.execute("PRAGMA table_info(sync_attempts)")}
+    row = db._connection.execute("SELECT * FROM sync_attempts WHERE id='attempt-1'").fetchone()
+    assert {"started_at", "finished_at", "result"} <= columns
+    assert row["started_at"] == "2026-09-30T00:00:00+00:00"
+    assert row["finished_at"] == row["started_at"] and row["result"] == "FAILED"
+    db.close()

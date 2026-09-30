@@ -43,6 +43,9 @@ class EdgeStateDB:
                     attempt_number INTEGER NOT NULL,
                     error TEXT,
                     created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    result TEXT NOT NULL DEFAULT 'RUNNING',
                     UNIQUE(outbox_id, attempt_number)
                 );
                 CREATE TABLE IF NOT EXISTS sync_checkpoints (
@@ -92,6 +95,27 @@ class EdgeStateDB:
             outbox_columns = {row["name"] for row in self._connection.execute("PRAGMA table_info(sync_outbox)")}
             if "next_attempt_at" not in outbox_columns:
                 self._connection.execute("ALTER TABLE sync_outbox ADD COLUMN next_attempt_at TEXT")
+            attempt_columns = {row["name"] for row in self._connection.execute("PRAGMA table_info(sync_attempts)")}
+            attempt_migrated = "result" not in attempt_columns
+            if "started_at" not in attempt_columns:
+                self._connection.execute("ALTER TABLE sync_attempts ADD COLUMN started_at TEXT")
+            if "finished_at" not in attempt_columns:
+                self._connection.execute("ALTER TABLE sync_attempts ADD COLUMN finished_at TEXT")
+            if "result" not in attempt_columns:
+                self._connection.execute("ALTER TABLE sync_attempts ADD COLUMN result TEXT NOT NULL DEFAULT 'RUNNING'")
+            if attempt_migrated:
+                self._connection.execute("UPDATE sync_attempts SET started_at=COALESCE(started_at,created_at)")
+                self._connection.execute(
+                    "UPDATE sync_attempts SET result=CASE "
+                    "WHEN error IS NOT NULL THEN 'FAILED' "
+                    "WHEN (SELECT status FROM sync_outbox WHERE id=sync_attempts.outbox_id)='UPLOADED' THEN 'SUCCESS' "
+                    "WHEN (SELECT status FROM sync_outbox WHERE id=sync_attempts.outbox_id)='CANCELLED' THEN 'CANCELLED' "
+                    "ELSE 'INTERRUPTED' END, "
+                    "finished_at=CASE WHEN error IS NOT NULL THEN created_at "
+                    "WHEN (SELECT status FROM sync_outbox WHERE id=sync_attempts.outbox_id) IN ('UPLOADED','CANCELLED') "
+                    "THEN COALESCE((SELECT updated_at FROM sync_outbox WHERE id=sync_attempts.outbox_id),created_at) "
+                    "ELSE created_at END"
+                )
             policy_columns = {row["name"] for row in self._connection.execute("PRAGMA table_info(memory_policy)")}
             if "sensitivity" not in policy_columns:
                 self._connection.execute("ALTER TABLE memory_policy ADD COLUMN sensitivity TEXT NOT NULL DEFAULT 'fleet_safe'")

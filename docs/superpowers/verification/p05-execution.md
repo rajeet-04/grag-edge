@@ -33,3 +33,11 @@ The P05 review reproduced three upload lifecycle defects and one shutdown race. 
 
 - Retained regression coverage: policy change during materialization cancels without sending, preparation failure records retry, success records an attempt, claim SQL failure rolls back both rows, and close waits for an in-flight connectivity probe.
 - Post-review verification: `UV_CACHE_DIR=/private/tmp/grag-edge-uv-cache uv run pytest tests/edge -q` completed with **83 passed, 1 skipped**. `PATH=/private/tmp/grag-edge-runtime/bin:$PATH DOCKER_HOST=tcp://127.0.0.1:23750 UV_CACHE_DIR=/private/tmp/grag-edge-uv-cache make baseline-check` exited 0: **283 passed, 2 skipped, and exactly 10 recorded imported failures**; the baseline validator reported no regression.
+
+## Attempt history lifecycle correction
+
+Focused tests were RED (3 failures) because attempt rows lacked `started_at`, `finished_at`, and a terminal result, and older SQLite databases were not migrated. The additive migration preserves `created_at` as `started_at` and infers prior outcomes where possible. New attempts begin as `RUNNING`; upload, retry, cancellation, and restart recovery atomically finalize them as `SUCCESS`, `FAILED`, `CANCELLED`, and `INTERRUPTED` respectively.
+
+- `UV_CACHE_DIR=/private/tmp/grag-edge-uv-cache uv run pytest tests/edge/sync/test_outbox.py -q`: **7 passed**.
+- `UV_CACHE_DIR=/private/tmp/grag-edge-uv-cache uv run pytest tests/edge -q`: **91 passed, 1 skipped**.
+- `PATH=/private/tmp/grag-edge-runtime/bin:$PATH DOCKER_HOST=tcp://127.0.0.1:23750 UV_CACHE_DIR=/private/tmp/grag-edge-uv-cache make baseline-check`: exit 0, **291 passed, 2 skipped, exact 10 known imported failures**; baseline validator reported no regression.
